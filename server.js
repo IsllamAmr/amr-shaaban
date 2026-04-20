@@ -325,7 +325,16 @@ function getRequestOrigin(request) {
 
 function getAllowedRequestOrigin(request) {
   const requestOrigin = normalizeOrigin(request.headers.origin);
-  return requestOrigin && ALLOWED_ORIGINS.has(requestOrigin) ? requestOrigin : '';
+
+  if (!requestOrigin) {
+    return '';
+  }
+
+  if (requestOrigin === getRequestOrigin(request)) {
+    return requestOrigin;
+  }
+
+  return ALLOWED_ORIGINS.has(requestOrigin) ? requestOrigin : '';
 }
 
 function appendVaryHeader(response, value) {
