@@ -1,0 +1,12 @@
+{
+  "name": "amr-shaban-exam-platform",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "firebase-admin": "^13.1.0"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "deploy": "firebase deploy --only hosting,database"
+  }
+}

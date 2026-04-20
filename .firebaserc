@@ -1,0 +1,14 @@
+{
+  "projects": {
+    "default": "amr-shaaban"
+  },
+  "targets": {
+    "amr-shaaban": {
+      "hosting": {
+        "default": [
+          "amr-shaaban"
+        ]
+      }
+    }
+  }
+}

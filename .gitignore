@@ -1,0 +1,8 @@
+node_modules/
+.firebase/
+firebase-hosting-public/
+.env
+firebase-service-account.json
+firebase-service-account.json.json
+serviceAccountKey.json
+*.log

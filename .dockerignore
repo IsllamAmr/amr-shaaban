@@ -1,0 +1,11 @@
+node_modules
+npm-debug.log
+.env
+.git
+.gitignore
+firebase-service-account.json
+firebase-service-account.json.json
+server-start.log
+server-start.err.log
+server-test.log
+server-test.err.log

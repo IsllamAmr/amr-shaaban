@@ -1,0 +1,73 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "examPlatform": {
+      "examsPublic": {
+        ".read": false,
+        ".write": false,
+        "$examId": {
+          ".read": false,
+          ".write": false,
+          ".validate": "!newData.exists() || (newData.hasChildren(['id', 'title', 'code', 'duration', 'questionCount', 'questions', 'active', 'createdAt']) && newData.child('id').isString() && newData.child('title').isString() && newData.child('code').isString() && newData.child('duration').isNumber() && newData.child('questionCount').isNumber() && newData.child('active').isBoolean())"
+        }
+      },
+      "examKeys": {
+        ".read": false,
+        ".write": false,
+        "$examId": {
+          ".validate": "!newData.exists() || (newData.hasChildren(['correctAnswers', 'updatedAt']) && newData.child('correctAnswers').exists())"
+        }
+      },
+      "examCodeRegistry": {
+        ".read": false,
+        ".write": false,
+        "$code": {
+          ".validate": "!newData.exists() || newData.isString()"
+        }
+      },
+      "publicExamCodes": {
+        ".read": false,
+        ".write": false,
+        "$code": {
+          ".read": false,
+          ".write": false,
+          ".validate": "!newData.exists() || newData.isString()"
+        }
+      },
+      "questionBanks": {
+        ".read": false,
+        ".write": false,
+        "$bankId": {
+          ".read": false,
+          ".write": false,
+          ".validate": "!newData.exists() || (newData.hasChildren(['title', 'description', 'questions', 'createdAt', 'updatedAt']) && newData.child('title').isString() && newData.child('description').isString() && newData.child('questions').exists())"
+        }
+      },
+      "publishedResults": {
+        ".read": false,
+        ".write": false,
+        "$code": {
+          "$submissionId": {
+            ".read": false,
+            ".write": false,
+            ".validate": "!newData.exists() || (newData.hasChildren(['studentName', 'studentGroup', 'examTitle', 'score', 'total', 'pct', 'status', 'publishedAt', 'submittedAt']) && newData.child('studentName').isString() && newData.child('studentGroup').isString() && newData.child('examTitle').isString() && newData.child('score').isNumber() && newData.child('total').isNumber() && newData.child('pct').isNumber() && newData.child('status').isString())"
+          }
+        }
+      },
+      "submissions": {
+        ".read": false,
+        ".write": false,
+        "$examId": {
+          ".read": false,
+          ".write": false,
+          "$submissionId": {
+            ".read": false,
+            ".write": false,
+            ".validate": "!newData.exists() || (newData.hasChildren(['id', 'examId', 'studentName', 'answers', 'submittedAt']) && newData.child('id').isString() && newData.child('examId').isString() && newData.child('examId').val() === $examId && newData.child('studentName').isString() && newData.child('studentName').val().length > 0 && newData.child('studentName').val().length <= 120 && newData.child('answers').exists() && newData.child('submittedAt').isNumber())"
+          }
+        }
+      }
+    }
+  }
+}

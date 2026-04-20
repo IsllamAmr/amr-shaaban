@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>منصة امتحانات أ/ عمرو شعبان</title>
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&family=Amiri:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  
+  <!-- مكتبات التشفير والأمان -->
+</head>
+<body>
+  <div class="bg-pattern"></div>
+
+  <div class="page active" id="pg-home">
+    <div style="min-height:100vh;display:flex;flex-direction:column">
+      <div class="header-bar" style="text-align:center;padding:28px 24px 24px">
+        <div style="font-size:44px;margin-bottom:10px">📚</div>
+        <h1 style="font-family:'Amiri',serif;color:var(--goldl);font-size:28px;margin-bottom:6px">أ/ عمرو شعبان</h1>
+        <div style="color:var(--cream);font-size:19px;font-weight:800">مُدرس اللغة العربية</div>
+        <div style="display:flex;align-items:center;justify-content:center;margin-top:16px;gap:12px">
+          <div style="height:1px;width:64px;background:var(--gold)"></div>
+          <div style="color:var(--gold);font-size:18px">✦</div>
+          <div style="height:1px;width:64px;background:var(--gold)"></div>
+        </div>
+      </div>
+
+      <div style="flex:1;display:flex;justify-content:center;align-items:center;padding:24px 20px">
+        <div style="width:100%;max-width:480px">
+          <div class="card">
+            <h2 style="text-align:center;color:var(--gd);font-size:22px;font-weight:800;margin-bottom:6px">🎓 دخول الطالب</h2>
+            <p id="h-subtitle" style="text-align:center;color:var(--tm);margin-bottom:22px;font-size:14px">أدخل بياناتك وكود الامتحان ثم ابدأ مباشرة.</p>
+
+            <div class="linked-exam-card" id="h-linked-card" style="display:none">
+              <div style="font-weight:900;color:var(--gd);font-size:17px" id="h-linked-title">عنوان الامتحان</div>
+              <div class="linked-exam-meta" id="h-linked-meta"></div>
+              <div class="share-link-box" id="h-linked-link"></div>
+            </div>
+
+            <div class="inp-wrap">
+              <label class="label">👤 اسم الطالب كاملًا</label>
+              <input class="inp" id="h-name" placeholder="مثال: محمد أحمد عبدالله">
+            </div>
+
+            <div class="inp-wrap">
+              <label class="label">🏫 الفصل / المجموعة</label>
+              <input class="inp" id="h-group" placeholder="مثال: الصف الثالث الثانوي - أ">
+            </div>
+
+            <div class="inp-wrap" id="h-code-wrap">
+              <label class="label">🔑 كود الامتحان</label>
+              <input class="inp" id="h-code" placeholder="مثال: AR001" style="text-transform:uppercase;letter-spacing:2px">
+            </div>
+
+            <div id="h-err" class="err" style="display:none"></div>
+            <button class="btn btn-green btn-full btn-lg" onclick="homeEnter()" style="margin-bottom:18px">ابدأ الامتحان ←</button>
+            <button class="btn btn-outline btn-full" onclick="goPage('pg-resultlookup')" style="margin-bottom:18px">📊 عرض النتيجة لاحقًا</button>
+
+            <div style="text-align:center;border-top:1px solid var(--cd);padding-top:16px">
+              <button onclick="goPage('pg-adminlogin')" style="background:none;border:none;color:var(--tl);font-size:13px;cursor:pointer;font-family:'Cairo';text-decoration:underline">🔐 دخول المدرس</button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <div style="text-align:center;padding:16px;color:rgba(255,255,255,0.35);font-size:12px;border-top:1px solid rgba(201,151,58,0.15)">
+        © منصة أ / عمرو شعبان التعليمية — جميع الحقوق محفوظة
+      </div>
+    </div>
+  </div>
+
+  <div class="page" id="pg-adminlogin">
+    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px">
+      <div style="width:100%;max-width:440px">
+        <div class="card">
+          <div style="text-align:center;margin-bottom:28px">
+            <div style="font-size:52px;margin-bottom:12px">🔐</div>
+            <div class="badge badge-gold" id="al-mode-tag" style="margin-bottom:14px">دخول كلمة المرور</div>
+            <h2 style="color:var(--gd);font-size:22px;font-weight:800" id="al-title">دخول المدرس</h2>
+            <p style="color:var(--tm);font-size:14px;margin-top:8px;line-height:1.8" id="al-helper">أدخل كلمة المرور للدخول إلى لوحة التحكم.</p>
+          </div>
+
+          <div class="inp-wrap" id="al-email-wrap" style="display:none">
+            <label class="label">البريد الإلكتروني</label>
+            <input class="inp" type="email" id="al-email" placeholder="teacher@example.com">
+          </div>
+
+          <div class="inp-wrap">
+            <label class="label">🔑 كلمة المرور</label>
+            <input class="inp" type="password" id="al-pass" placeholder="أدخل كلمة المرور">
+          </div>
+
+          <div id="al-err" class="err" style="display:none"></div>
+          <div id="al-note" class="suc" style="display:none"></div>
+
+          <button class="btn btn-green btn-full" id="al-action-btn" onclick="adminLogin()" style="margin-bottom:12px">دخول</button>
+          <button class="btn btn-outline btn-full" onclick="goPage('pg-home')">← رجوع للرئيسية</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="page" id="pg-admindash">
+    <div class="header-bar flex-between">
+      <div>
+        <div style="color:var(--goldl);font-size:20px;font-weight:800">📋 لوحة التحكم</div>
+        <div style="color:var(--cream);font-size:13px;opacity:.8;margin-top:2px">إدارة الامتحانات والنتائج من Firebase</div>
+      </div>
+      <button class="btn btn-outline btn-sm" onclick="adminLogout()" style="color:var(--goldl);border-color:var(--gold)">تسجيل الخروج</button>
+    </div>
+
+    <div style="max-width:960px;margin:0 auto;padding:28px 20px">
+      <div class="grid3" id="ad-stats" style="margin-bottom:32px"></div>
+      <div class="chart-grid" id="ad-charts" style="margin-bottom:32px"></div>
+      <div class="flex-between" style="margin-bottom:20px">
+        <h2 style="color:var(--cream);font-size:19px;font-weight:800">📝 الامتحانات</h2>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <button class="btn btn-outline btn-sm" onclick="importDataFromJson()" title="استيراد نسخة احتياطية" style="font-size:12px">📂 استيراد</button>
+          <button class="btn btn-outline btn-sm" onclick="exportDataAsJson()" title="تحميل نسخة احتياطية" style="font-size:12px">💾 حفظ احتياطي</button>
+          <button class="btn btn-outline" onclick="goPage('pg-banks')">📚 بنوك الأسئلة</button>
+          <button class="btn btn-gold" onclick="goPage('pg-createexam')">+ إنشاء امتحان جديد</button>
+        </div>
+      </div>
+      <div id="ad-exams"></div>
+    </div>
+  </div>
+
+  <div class="page" id="pg-createexam">
+    <div class="header-bar flex-between">
+      <div style="color:var(--goldl);font-size:20px;font-weight:800">➕ إنشاء امتحان جديد</div>
+      <button class="btn btn-outline btn-sm" onclick="goPage('pg-admindash')" style="color:var(--goldl);border-color:var(--gold)">← رجوع</button>
+    </div>
+
+    <div style="max-width:800px;margin:0 auto;padding:28px 20px">
+      <div class="card" style="margin-bottom:22px">
+        <h3 style="color:var(--gd);margin-bottom:20px;font-size:17px;font-weight:800">📋 بيانات الامتحان</h3>
+        <div class="grid2">
+          <div class="inp-wrap">
+            <label class="label">عنوان الامتحان</label>
+            <input class="inp" id="ce-title" placeholder="مثال: امتحان النحو — الفصل الأول">
+          </div>
+          <div class="inp-wrap">
+            <label class="label">كود الامتحان (للطلاب)</label>
+            <input class="inp" id="ce-code" placeholder="مثال: AR001" style="text-transform:uppercase;letter-spacing:2px">
+          </div>
+        </div>
+
+        <div class="inp-wrap">
+          <label class="label">مدة الامتحان (بالدقائق)</label>
+          <input class="inp" type="number" id="ce-dur" value="30" min="5" max="180" style="max-width:200px">
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:22px">
+        <div class="flex-between" style="margin-bottom:16px">
+          <div>
+            <h3 style="color:var(--gd);margin-bottom:6px;font-size:17px;font-weight:800">📚 الاستيراد من بنك الأسئلة</h3>
+            <div style="color:var(--tm);font-size:13px;line-height:1.8">اختر بنكًا محددًا ثم أضف منه أي سؤال، ويمكنك في نفس الوقت كتابة أسئلة جديدة من عندك.</div>
+          </div>
+          <button class="btn btn-outline btn-sm" onclick="goPage('pg-banks')">إدارة البنوك</button>
+        </div>
+        <div id="ce-bank-panel"></div>
+      </div>
+
+      <div id="ce-questions"></div>
+
+      <div class="flex-center" style="margin-bottom:22px;gap:14px;flex-wrap:wrap">
+        <button class="btn btn-outline" onclick="addQuestion('mcq')">+ سؤال اختياري (أ ب ج د)</button>
+        <button class="btn btn-outline" onclick="addQuestion('tf')">+ سؤال صح / خطأ</button>
+      </div>
+
+      <div id="ce-err" class="err" style="display:none"></div>
+      <div class="flex-center" style="gap:14px">
+        <button class="btn btn-green btn-lg" onclick="saveExam()">💾 حفظ الامتحان</button>
+        <button class="btn btn-outline" onclick="goPage('pg-admindash')">إلغاء</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="page" id="pg-banks">
+    <div class="header-bar flex-between">
+      <div>
+        <div style="color:var(--goldl);font-size:20px;font-weight:800">📚 بنوك الأسئلة</div>
+        <div style="color:var(--cream);font-size:13px;opacity:.85;margin-top:2px">أنشئ أكثر من بنك، ثم اختر منه ما تريد عند تكوين الامتحان.</div>
+      </div>
+      <button class="btn btn-outline btn-sm" onclick="goPage('pg-admindash')" style="color:var(--goldl);border-color:var(--gold)">← رجوع</button>
+    </div>
+
+    <div style="max-width:1120px;margin:0 auto;padding:28px 20px">
+      <div class="bank-layout">
+        <div class="card">
+          <div class="flex-between" style="margin-bottom:16px">
+            <div>
+              <h3 style="color:var(--gd);font-size:18px;font-weight:800;margin-bottom:4px">البنوك المتاحة</h3>
+              <div style="color:var(--tm);font-size:13px">يمكنك إنشاء بنك لكل فرع: النصوص، النحو، القصة، وغيرها.</div>
+            </div>
+            <button class="btn btn-gold btn-sm" onclick="resetBankEditor(true)">+ بنك جديد</button>
+          </div>
+          <div id="qb-list"></div>
+        </div>
+
+        <div class="card">
+          <div class="flex-between" style="margin-bottom:16px">
+            <div>
+              <h3 style="color:var(--gd);font-size:18px;font-weight:800;margin-bottom:4px" id="qb-editor-title">بنك جديد</h3>
+              <div style="color:var(--tm);font-size:13px" id="qb-editor-subtitle">اكتب اسم البنك ثم أضف إليه الأسئلة التي تريد الرجوع إليها لاحقًا.</div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn btn-red btn-sm" id="qb-delete-btn" onclick="deleteQuestionBank()" style="display:none">حذف البنك</button>
+              <button class="btn btn-green btn-sm" onclick="saveQuestionBank()">💾 حفظ البنك</button>
+            </div>
+          </div>
+
+          <div class="grid2" style="margin-bottom:8px">
+            <div class="inp-wrap">
+              <label class="label">اسم البنك</label>
+              <input class="inp" id="qb-name" placeholder="مثال: بنك النحو">
+            </div>
+            <div class="inp-wrap">
+              <label class="label">وصف مختصر</label>
+              <input class="inp" id="qb-description" placeholder="مثال: أسئلة المبتدأ والخبر والبلاغة">
+            </div>
+          </div>
+
+          <div id="qb-err" class="err" style="display:none"></div>
+          <div id="qb-note" class="suc" style="display:none"></div>
+
+          <div id="qb-questions"></div>
+
+          <div class="flex-center" style="margin-top:22px;gap:14px;flex-wrap:wrap">
+            <button class="btn btn-outline" onclick="addBankQuestion('mcq')">+ سؤال اختياري</button>
+            <button class="btn btn-outline" onclick="addBankQuestion('tf')">+ سؤال صح / خطأ</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="page no-sel" id="pg-exam">
+    <div class="header-bar">
+      <div class="flex-between">
+        <div>
+          <div style="color:var(--goldl);font-size:17px;font-weight:800" id="ex-title">اسم الامتحان</div>
+          <div style="color:var(--cream);font-size:13px;margin-top:2px" id="ex-student">اسم الطالب</div>
+        </div>
+        <div style="text-align:center;position:relative">
+          <div style="color:var(--goldl);font-size:28px;font-weight:900;font-variant-numeric:tabular-nums" id="ex-timer">00:00</div>
+          <div style="color:rgba(255,255,255,0.7);font-size:11px">الوقت المتبقي</div>
+          <div id="ex-save-indicator" style="position:absolute;bottom:-20px;right:0;font-size:11px;color:var(--goldl);opacity:0;transition:opacity 0.3s;pointer-events:none">💾 تم الحفظ</div>
+        </div>
+      </div>
+      <div class="timer-bar" style="margin-top:12px">
+        <div class="timer-fill" id="ex-timerbar" style="width:100%"></div>
+      </div>
+    </div>
+
+    <div style="max-width:800px;margin:0 auto;padding:24px 20px">
+      <div class="flex-between" style="margin-bottom:10px">
+        <div style="color:var(--cream);font-size:14px" id="ex-progress-txt"></div>
+        <div style="color:var(--goldl);font-size:14px;font-weight:700" id="ex-answered-txt"></div>
+      </div>
+      <div class="progress-bar" style="margin-bottom:26px">
+        <div class="progress-fill" id="ex-progressbar" style="width:0%"></div>
+      </div>
+
+      <div id="ex-questions"></div>
+
+      <div style="text-align:center;margin-top:32px;padding-bottom:40px">
+        <button class="btn btn-gold btn-lg" onclick="confirmSubmit()">✅ تسليم الامتحان</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="page" id="pg-results">
+    <div class="header-bar" style="text-align:center;padding:28px">
+      <div style="font-size:40px;margin-bottom:10px" id="res-emoji">🎉</div>
+      <div style="color:var(--goldl);font-size:20px;font-weight:800" id="res-heading">تم استلام الإجابات</div>
+    </div>
+
+    <div style="max-width:720px;margin:0 auto;padding:28px 20px">
+      <div class="card" style="text-align:center;margin-bottom:22px">
+        <div class="score-circle score-good" id="res-circle">
+          <span id="res-pct" style="font-size:30px">تم</span>
+          <span id="res-circle-subtitle" style="font-size:12px;opacity:.9">إرسال ناجح</span>
+        </div>
+        <h2 style="color:var(--gd);font-size:22px;font-weight:900;margin-bottom:6px" id="res-name"></h2>
+        <div style="color:var(--tm);font-size:15px;margin-bottom:20px" id="res-exam-title"></div>
+        <div class="grid3" style="margin-bottom:16px">
+          <div class="stat-card"><div class="stat-num" style="color:#2e7d32" id="res-score">0</div><div class="stat-lbl" id="res-score-label">مجاب</div></div>
+          <div class="stat-card"><div class="stat-num" style="color:var(--red)" id="res-wrong">0</div><div class="stat-lbl" id="res-wrong-label">غير مجاب</div></div>
+          <div class="stat-card"><div class="stat-num" id="res-total">0</div><div class="stat-lbl" id="res-total-label">إجمالي الأسئلة</div></div>
+        </div>
+        <div style="padding:14px;background:var(--goldp);border-radius:12px;font-size:17px;font-weight:800;color:#7a5200" id="res-msg"></div>
+      </div>
+
+      <h3 style="color:var(--cream);font-size:17px;font-weight:800;margin-bottom:16px" id="res-review-title">تفاصيل التسليم</h3>
+      <div id="res-review"></div>
+
+      <div class="print-actions" style="text-align:center;margin-top:28px;padding-bottom:40px">
+        <button class="btn btn-outline btn-lg" onclick="printStudentReceipt()">🖨️ طباعة / حفظ PDF</button>
+        <button class="btn btn-gold btn-lg" onclick="goHome()">🏠 العودة للرئيسية</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="page" id="pg-adminresults">
+    <div class="header-bar flex-between">
+      <div>
+        <div style="color:var(--goldl);font-size:19px;font-weight:800" id="ar-title">نتائج الامتحان</div>
+        <div style="color:var(--cream);font-size:13px;opacity:.8;margin-top:2px" id="ar-subtitle"></div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-gold btn-sm" onclick="publishExamResults()">📢 نشر النتائج للطلاب</button>
+        <button class="btn btn-outline btn-sm" onclick="goPage('pg-admindash')" style="color:var(--goldl);border-color:var(--gold)">← رجوع</button>
+      </div>
+    </div>
+
+    <div style="max-width:960px;margin:0 auto;padding:28px 20px">
+      <div class="grid3" id="ar-stats" style="margin-bottom:26px"></div>
+      <div class="chart-grid" id="ar-charts" style="margin-bottom:26px"></div>
+      <div id="ar-list"></div>
+    </div>
+  </div>
+
+  <div class="page" id="pg-resultlookup">
+    <div class="header-bar flex-between">
+      <div>
+        <div style="color:var(--goldl);font-size:19px;font-weight:800">📊 عرض النتيجة</div>
+        <div style="color:var(--cream);font-size:13px;opacity:.85;margin-top:2px">أدخل كود الامتحان ورقم المتابعة الذي ظهر لك بعد التسليم.</div>
+      </div>
+      <button class="btn btn-outline btn-sm" onclick="goPage('pg-home')" style="color:var(--goldl);border-color:var(--gold)">← رجوع</button>
+    </div>
+
+    <div style="max-width:520px;margin:0 auto;padding:28px 20px">
+      <div class="card">
+        <div class="inp-wrap">
+          <label class="label">كود الامتحان</label>
+          <input class="inp" id="rl-code" placeholder="مثال: AR001" style="text-transform:uppercase;letter-spacing:2px">
+        </div>
+        <div class="inp-wrap">
+          <label class="label">رقم متابعة النتيجة</label>
+          <input class="inp" id="rl-token" placeholder="سيظهر لك بعد تسليم الامتحان">
+        </div>
+        <div id="rl-err" class="err" style="display:none"></div>
+        <div class="muted-note" style="margin-bottom:16px">
+          تظهر هنا الدرجة والنسبة وحالة النجاح فقط بعد أن يقوم المدرس بنشر النتائج، ولا يتم عرض الإجابات نهائيًا.
+        </div>
+        <button class="btn btn-green btn-full btn-lg" onclick="lookupPublishedResult()">عرض النتيجة</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="page" id="pg-studentresult">
+    <div class="header-bar" style="text-align:center;padding:28px">
+      <div style="font-size:40px;margin-bottom:10px" id="sr-emoji">📘</div>
+      <div style="color:var(--goldl);font-size:20px;font-weight:800" id="sr-heading">نتيجة الطالب</div>
+    </div>
+
+    <div style="max-width:720px;margin:0 auto;padding:28px 20px">
+      <div class="card" style="text-align:center;margin-bottom:22px">
+        <div class="score-circle score-good" id="sr-circle">
+          <span id="sr-pct" style="font-size:30px">0%</span>
+          <span id="sr-circle-subtitle" style="font-size:12px;opacity:.9">النتيجة</span>
+        </div>
+        <h2 style="color:var(--gd);font-size:22px;font-weight:900;margin-bottom:6px" id="sr-name"></h2>
+        <div style="color:var(--tm);font-size:15px;margin-bottom:20px" id="sr-exam-title"></div>
+        <div class="grid3" style="margin-bottom:16px">
+          <div class="stat-card"><div class="stat-num" id="sr-score">0</div><div class="stat-lbl">الدرجة</div></div>
+          <div class="stat-card"><div class="stat-num" id="sr-total">0</div><div class="stat-lbl">إجمالي الأسئلة</div></div>
+          <div class="stat-card"><div class="stat-num" id="sr-status">ناجح</div><div class="stat-lbl">الحالة</div></div>
+        </div>
+        <div style="padding:14px;background:var(--goldp);border-radius:12px;font-size:17px;font-weight:800;color:#7a5200" id="sr-msg"></div>
+      </div>
+
+      <div class="card" style="margin-bottom:18px;border-right:5px solid var(--gold)">
+        <div style="font-weight:800;color:var(--gd);margin-bottom:8px">🔒 عرض النتيجة فقط</div>
+        <div style="color:var(--tm);font-size:14px;line-height:1.9">
+          تم إظهار الدرجة والنسبة وحالة النجاح فقط، بينما تظل الإجابات ومفاتيح الحل مخفية.
+        </div>
+      </div>
+
+      <div class="print-actions" style="text-align:center;margin-top:28px;padding-bottom:40px">
+        <button class="btn btn-outline btn-lg" onclick="printPublishedResult()">🖨️ طباعة / حفظ PDF</button>
+        <button class="btn btn-gold btn-lg" onclick="goPage('pg-home')">🏠 العودة للرئيسية</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="warn-modal" style="display:none">
+    <div class="modal">
+      <div style="font-size:56px;margin-bottom:14px">⚠️</div>
+      <h2 style="color:var(--red);margin-bottom:12px;font-size:22px">تحذير!</h2>
+      <p style="color:var(--tm);margin-bottom:8px;font-size:15px" id="warn-msg">تم رصد مغادرة نافذة الامتحان.</p>
+      <p style="color:var(--td);font-weight:800;font-size:16px;margin-bottom:20px" id="warn-count-txt">تحذير 1 من 3</p>
+      <p style="color:var(--tl);font-size:13px;margin-bottom:24px">بعد 3 تحذيرات يتم تسليم الامتحان تلقائيًا.</p>
+      <button class="btn btn-green btn-full btn-lg" onclick="closeWarnModal()">حسنًا، سأكمل الامتحان</button>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="submit-modal" style="display:none">
+    <div class="modal">
+      <div style="font-size:56px;margin-bottom:14px">📤</div>
+      <h2 style="color:var(--gd);margin-bottom:12px;font-size:22px">تسليم الامتحان</h2>
+      <p style="color:var(--tm);margin-bottom:8px;font-size:15px" id="sub-msg">هل أنت متأكد من التسليم؟</p>
+      <p style="color:var(--tl);font-size:13px;margin-bottom:26px">لن تظهر الإجابة الصحيحة للطالب مباشرة في النسخة المجانية.</p>
+      <div class="flex" style="justify-content:center;gap:14px">
+        <button class="btn btn-green btn-lg" onclick="submitExam()">نعم، سلّم الآن</button>
+        <button class="btn btn-outline btn-lg" onclick="document.getElementById('submit-modal').style.display='none'">إلغاء</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="admin-review-modal" style="display:none">
+    <div class="modal" style="max-width:760px;text-align:right">
+      <div class="flex-between" style="align-items:flex-start">
+        <div>
+          <div style="color:var(--gd);font-size:22px;font-weight:800" id="admin-review-title">اسم الطالب</div>
+          <div style="color:var(--tm);font-size:14px;margin-top:6px" id="admin-review-subtitle"></div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-outline btn-sm" id="admin-certificate-btn" onclick="printExcellenceCertificate()" style="display:none">🏆 طباعة شهادة</button>
+          <button class="btn btn-outline btn-sm" onclick="printAdminReview()">🖨️ طباعة PDF</button>
+          <button class="btn btn-outline btn-sm" onclick="closeAdminReview()">إغلاق</button>
+        </div>
+      </div>
+      <div style="max-height:70vh;overflow:auto;margin-top:20px;padding-left:4px" id="admin-review-content"></div>
+    </div>
+  </div>
+
+  <script src="app-config.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
