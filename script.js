@@ -38,9 +38,12 @@ let questions = [];
 let qCounter = 0;
 let questionBanks = [];
 let activeBankId = null;
+let activeBankUpdatedAt = 0;
 let bankQuestions = [];
 let bankQuestionCounter = 0;
 let selectedImportBankId = "";
+let isQuestionBankSaving = false;
+let isQuestionBankDeleting = false;
 let adminResultsState = { exam: null, byId: {} };
 let currentAdminReviewId = null;
 let examBackGuardActive = false;
@@ -63,6 +66,33 @@ function getStoredJson(key) {
   } catch (error) {
     console.error("تعذر قراءة البيانات المحلية:", error);
     return null;
+  }
+}
+
+function createClientDebugId(prefix = "qb") {
+  if (window.crypto?.randomUUID) {
+    return `${prefix}-${window.crypto.randomUUID().slice(0, 8)}`;
+  }
+
+  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+}
+
+function summarizeBankQuestions(questionList = []) {
+  return questionList.map((question, index) => ({
+    id: question?.id || `q${index + 1}`,
+    type: question?.type || "",
+    correct: Number.parseInt(question?.correct, 10),
+    difficulty: normalizeDifficulty(question?.difficulty),
+    textLength: String(question?.text || "").trim().length,
+    hasAttachment: Boolean(normalizeAttachment(question?.attachment))
+  }));
+}
+
+function logQuestionBankDebug(event, payload = {}) {
+  try {
+    console.info(`[QB][${new Date().toISOString()}] ${event}`, payload);
+  } catch (error) {
+    console.info(`[QB][${new Date().toISOString()}] ${event}`);
   }
 }
 
@@ -174,6 +204,9 @@ function restoreBackup(backupData) {
     
     exams = backupData.exams;
     questionBanks = backupData.questionBanks;
+    logQuestionBankDebug("restore-backup-local-state", {
+      bankCount: Array.isArray(questionBanks) ? questionBanks.length : Object.keys(questionBanks || {}).length
+    });
     
     console.log("%c✅ تم استرجاع البيانات من النسخة الاحتياطية", "color:green;font-weight:bold");
     return true;
@@ -225,6 +258,9 @@ function importDataFromJson() {
         if (confirm("هل تريد استيراد البيانات من الملف؟ سيتم استبدال البيانات الحالية.")) {
           exams = backupData.exams || [];
           questionBanks = backupData.banks || [];
+          logQuestionBankDebug("import-backup-local-state", {
+            importedBankCount: Array.isArray(questionBanks) ? questionBanks.length : Object.keys(questionBanks || {}).length
+          });
           
           // حفظ النسخة الاحتياطية الجديدة
           createBackup();
@@ -1003,6 +1039,32 @@ function hideNotice() {
   note.textContent = "";
 }
 
+function setButtonLoading(buttonId, isLoading, loadingText = "جارٍ التنفيذ...") {
+  const button = typeof buttonId === "string" ? document.getElementById(buttonId) : buttonId;
+
+  if (!button) {
+    return;
+  }
+
+  if (isLoading) {
+    if (!button.dataset.originalHtml) {
+      button.dataset.originalHtml = button.innerHTML;
+    }
+
+    button.disabled = true;
+    button.classList.add("is-loading");
+    button.innerHTML = `<span class="btn-content"><span class="btn-spinner"></span><span>${loadingText}</span></span>`;
+    return;
+  }
+
+  button.disabled = false;
+  button.classList.remove("is-loading");
+
+  if (button.dataset.originalHtml) {
+    button.innerHTML = button.dataset.originalHtml;
+  }
+}
+
 function formatDate(value) {
   if (!value) {
     return "غير محدد";
@@ -1225,6 +1287,12 @@ async function loadQuestionBanks() {
     method: "GET"
   });
   questionBanks = mapQuestionBankList(payload.banks || []);
+  logQuestionBankDebug("load-question-banks", {
+    bankCount: questionBanks.length,
+    bankIds: questionBanks.map((bank) => bank.id),
+    activeBankId,
+    selectedImportBankId
+  });
   return questionBanks;
 }
 
@@ -1489,6 +1557,7 @@ async function goPage(id) {
 async function adminLogin() {
   const passwordInput = document.getElementById("al-pass").value;
   const errorEl = document.getElementById("al-err");
+  const actionButton = document.getElementById("al-action-btn");
 
   hideErr("al-err");
   hideNotice();
@@ -1499,6 +1568,8 @@ async function adminLogin() {
     showErr(errorEl, "أدخل كلمة المرور.");
     return;
   }
+
+  setButtonLoading(actionButton, true, "جارٍ التحقق...");
 
   try {
     const payload = await requestServerJson("/api/admin/login", {
@@ -1516,6 +1587,8 @@ async function adminLogin() {
   } catch (error) {
     console.error("خطأ في الدخول:", error);
     showErr(errorEl, `❌ ${mapFirebaseError(error, "تعذر تسجيل الدخول عبر السيرفر.")}`);
+  } finally {
+    setButtonLoading(actionButton, false);
   }
 }
 
@@ -1862,6 +1935,7 @@ async function addAllQuestionsFromBank(bankId) {
 
 function resetBankEditor(createStarterQuestion = true) {
   activeBankId = null;
+  activeBankUpdatedAt = 0;
   bankQuestions = [];
   bankQuestionCounter = 0;
 
@@ -1879,16 +1953,27 @@ function resetBankEditor(createStarterQuestion = true) {
 
   renderBankList();
   renderBankQuestions();
+  logQuestionBankDebug("reset-bank-editor", {
+    createStarterQuestion,
+    activeBankId,
+    bankQuestionCount: bankQuestions.length
+  });
 }
 
 function openBankEditor(bankId) {
   const bank = getBankById(bankId);
 
   if (!bank) {
+    logQuestionBankDebug("open-bank-editor-missing-bank", {
+      bankId,
+      knownBankIds: questionBanks.map((item) => item.id),
+      activeBankId
+    });
     return;
   }
 
   activeBankId = bank.id;
+  activeBankUpdatedAt = Number(bank.updatedAt || bank.createdAt || 0);
   bankQuestionCounter = 0;
   bankQuestions = bank.questions.map((question) => ({
     ...createEmptyQuestion(question.type, createBankQuestionId),
@@ -1909,6 +1994,12 @@ function openBankEditor(bankId) {
 
   renderBankList();
   renderBankQuestions();
+  logQuestionBankDebug("open-bank-editor", {
+    bankId: bank.id,
+    title: bank.title,
+    bankQuestionCount: bank.questions.length,
+    activeBankUpdatedAt
+  });
 }
 
 function renderBankList() {
@@ -2137,11 +2228,18 @@ async function loadQuestionBanksPage() {
   await loadQuestionBanks();
 
   if (activeBankId && getBankById(activeBankId)) {
+    logQuestionBankDebug("load-bank-page-reopen-active", {
+      activeBankId
+    });
     openBankEditor(activeBankId);
     return;
   }
 
   if (questionBanks.length) {
+    logQuestionBankDebug("load-bank-page-fallback-first", {
+      previousActiveBankId: activeBankId,
+      fallbackBankId: questionBanks[0].id
+    });
     openBankEditor(questionBanks[0].id);
     return;
   }
@@ -2153,9 +2251,18 @@ async function saveQuestionBank() {
   const name = document.getElementById("qb-name").value.trim();
   const description = document.getElementById("qb-description").value.trim();
   const err = document.getElementById("qb-err");
+  const saveButton = document.getElementById("qb-save-btn");
 
   hideErr("qb-err");
   hideBankNote();
+
+  if (isQuestionBankSaving) {
+    logQuestionBankDebug("save-question-bank-skipped-duplicate", {
+      activeBankId,
+      bankQuestionCount: bankQuestions.length
+    });
+    return;
+  }
 
   if (!name) {
     showErr(err, "اكتب اسم البنك أولًا.");
@@ -2187,6 +2294,8 @@ async function saveQuestionBank() {
   }
 
   try {
+    isQuestionBankSaving = true;
+    setButtonLoading(saveButton, true, "جارٍ حفظ البنك...");
     await ensureAdminAccess();
     const sanitizedQuestions = sanitizeQuestionList(bankQuestions).map((question) => ({
       id: question.id,
@@ -2197,13 +2306,28 @@ async function saveQuestionBank() {
       attachment: question.attachment || null,
       difficulty: question.difficulty
     }));
+    const debugRequestId = createClientDebugId(activeBankId ? "qb-update" : "qb-create");
+    const editorBank = activeBankId ? getBankById(activeBankId) : null;
     const method = activeBankId ? "PATCH" : "POST";
     const endpoint = activeBankId
       ? `/api/admin/question-banks/${encodeURIComponent(activeBankId)}`
       : "/api/admin/question-banks";
+    logQuestionBankDebug("save-question-bank-request", {
+      debugRequestId,
+      method,
+      endpoint,
+      activeBankId,
+      activeBankUpdatedAt,
+      editorBankQuestionCount: editorBank?.questionCount ?? null,
+      payloadQuestionCount: sanitizedQuestions.length,
+      payloadQuestionIds: sanitizedQuestions.map((question) => question.id),
+      payloadQuestions: summarizeBankQuestions(sanitizedQuestions)
+    });
     const payload = await requestServerJson(endpoint, {
       method,
       body: JSON.stringify({
+        debugRequestId,
+        expectedUpdatedAt: activeBankUpdatedAt,
         title: name,
         description,
         questions: sanitizedQuestions
@@ -2215,14 +2339,36 @@ async function saveQuestionBank() {
     activeBankId = savedBankId;
     openBankEditor(savedBankId);
     renderBankImportSection();
+    logQuestionBankDebug("save-question-bank-success", {
+      debugRequestId,
+      savedBankId,
+      returnedQuestionCount: payload.bank?.questionCount ?? null,
+      activeBankUpdatedAt
+    });
     showBankNote("تم حفظ البنك بنجاح.");
   } catch (error) {
+    logQuestionBankDebug("save-question-bank-error", {
+      activeBankId,
+      activeBankUpdatedAt,
+      bankQuestionCount: bankQuestions.length,
+      message: error?.message || String(error)
+    });
     showErr(err, mapFirebaseError(error, "تعذر حفظ بنك الأسئلة."));
+  } finally {
+    isQuestionBankSaving = false;
+    setButtonLoading(saveButton, false);
   }
 }
 
 async function deleteQuestionBank() {
   if (!activeBankId) {
+    return;
+  }
+
+  if (isQuestionBankDeleting) {
+    logQuestionBankDebug("delete-question-bank-skipped-duplicate", {
+      activeBankId
+    });
     return;
   }
 
@@ -2233,10 +2379,23 @@ async function deleteQuestionBank() {
   }
 
   try {
+    isQuestionBankDeleting = true;
+    setButtonLoading("qb-delete-btn", true, "جارٍ حذف البنك...");
     await ensureAdminAccess();
     const deletedId = activeBankId;
+    const debugRequestId = createClientDebugId("qb-delete");
+    const deletingBank = getBankById(deletedId);
+    logQuestionBankDebug("delete-question-bank-request", {
+      debugRequestId,
+      deletedId,
+      title: deletingBank?.title || "",
+      questionCount: deletingBank?.questionCount ?? null
+    });
     await requestServerJson(`/api/admin/question-banks/${encodeURIComponent(deletedId)}`, {
-      method: "DELETE"
+      method: "DELETE",
+      body: JSON.stringify({
+        debugRequestId
+      })
     });
 
     if (selectedImportBankId === deletedId) {
@@ -2253,8 +2412,20 @@ async function deleteQuestionBank() {
     }
 
     showBankNote("تم حذف البنك بنجاح.");
+    logQuestionBankDebug("delete-question-bank-success", {
+      debugRequestId,
+      deletedId,
+      remainingBankIds: questionBanks.map((bank) => bank.id)
+    });
   } catch (error) {
+    logQuestionBankDebug("delete-question-bank-error", {
+      activeBankId,
+      message: error?.message || String(error)
+    });
     showErr(document.getElementById("qb-err"), mapFirebaseError(error, "تعذر حذف بنك الأسئلة."));
+  } finally {
+    isQuestionBankDeleting = false;
+    setButtonLoading("qb-delete-btn", false);
   }
 }
 
@@ -2328,7 +2499,7 @@ async function toggleExam(id) {
     const selectedExam = exams.find((item) => item.id === id);
 
     if (!selectedExam) {
-      throw new Error("Ø§Ù„Ø§Ù…ØªØ­Ø§Ù† ØºÙŠØ± Ù…ÙˆØ¬ÙˆØ¯.");
+      throw new Error("الامتحان غير موجود.");
     }
 
     await requestServerJson(`/api/admin/exams/${encodeURIComponent(id)}/status`, {
@@ -2534,6 +2705,7 @@ async function homeEnter() {
   const rawCode = document.getElementById("h-code").value;
   const code = rawCode.trim() ? sanitizeCode(rawCode) : "";
   const err = document.getElementById("h-err");
+  const actionButton = document.getElementById("h-enter-btn");
 
   if (!name) {
     showErr(err, "من فضلك أدخل اسم الطالب كاملًا.");
@@ -2550,6 +2722,9 @@ async function homeEnter() {
     return;
   }
 
+  hideErr("h-err");
+  setButtonLoading(actionButton, true, "جارٍ تجهيز الامتحان...");
+
   try {
     let resolvedExamId = linkedExam?.id || "";
 
@@ -2560,7 +2735,7 @@ async function homeEnter() {
       });
 
       if (!accessPayload?.exam?.id) {
-        throw new Error("ÙƒÙˆØ¯ Ø§Ù„Ø§Ù…ØªØ­Ø§Ù† ØºÙŠØ± ØµØ­ÙŠØ­ Ø£Ùˆ Ø§Ù„Ø§Ù…ØªØ­Ø§Ù† Ù…ØºÙ„Ù‚ Ø§Ù„Ø¢Ù†.");
+        throw new Error("كود الامتحان غير صحيح أو الامتحان مغلق الآن.");
       }
 
       linkedExam = {
@@ -2590,6 +2765,8 @@ async function homeEnter() {
     return;
   } catch (error) {
     showErr(err, mapFirebaseError(error, "تعذر فتح الامتحان."));
+  } finally {
+    setButtonLoading(actionButton, false);
   }
 }
 
@@ -2952,82 +3129,43 @@ function showSubmissionReceipt() {
   const receiptWrong = Math.max(0, receiptTotal - receiptScore);
   const receiptAnswered = Number(currentSubmissionReceipt.answeredCount || 0);
   const receiptPassed = receiptPct >= 50;
-  const receiptStatus = currentSubmissionReceipt.status || (receiptPassed ? "Ù†Ø§Ø¬Ø­" : "Ù„Ù… ÙŠØ¬ØªØ²");
-  const receiptTrackingToken = currentSubmissionReceipt.trackingToken || currentSubmissionReceipt.submissionId || "ØºÙŠØ± Ù…ØªØ§Ø­";
+  const receiptStatus = currentSubmissionReceipt.status || (receiptPassed ? "????" : "?? ????");
+  const receiptTrackingToken = currentSubmissionReceipt.trackingToken || currentSubmissionReceipt.submissionId || "??? ????";
 
-  document.getElementById("res-heading").textContent = "ØªÙ… ØªØµØ­ÙŠØ­ Ø§Ù„Ø§Ù…ØªØ­Ø§Ù†";
+  document.getElementById("res-heading").textContent = "?? ????? ????????";
   document.getElementById("res-circle").className = `score-circle ${receiptPassed ? "score-good" : "score-fail"}`;
   document.getElementById("res-pct").textContent = `${receiptPct}%`;
   document.getElementById("res-circle-subtitle").textContent = receiptStatus;
-  document.getElementById("res-emoji").textContent = receiptPassed ? "ðŸŽ‰" : "ðŸ“˜";
+  document.getElementById("res-emoji").textContent = receiptPassed ? "??" : "??";
   document.getElementById("res-name").textContent = currentSubmissionReceipt.studentName || currentStudent;
-  document.getElementById("res-exam-title").textContent = `${currentSubmissionReceipt.examTitle || currentExam.title} â€” ${currentSubmissionReceipt.studentGroup || currentStudentGroup}`;
+  document.getElementById("res-exam-title").textContent = `${currentSubmissionReceipt.examTitle || currentExam.title} ? ${currentSubmissionReceipt.studentGroup || currentStudentGroup}`;
   document.getElementById("res-score").textContent = receiptScore;
   document.getElementById("res-wrong").textContent = receiptWrong;
   document.getElementById("res-total").textContent = receiptTotal;
-  document.getElementById("res-score-label").textContent = "Ø¯Ø±Ø¬ØªÙƒ";
-  document.getElementById("res-wrong-label").textContent = "Ø£Ø®Ø·Ø§Ø¡";
-  document.getElementById("res-total-label").textContent = "Ø¥Ø¬Ù…Ø§Ù„ÙŠ Ø§Ù„Ø£Ø³Ø¦Ù„Ø©";
-  document.getElementById("res-msg").textContent = `ØªÙ… Ø§Ù„ØªØµØ­ÙŠØ­ Ø¹Ù„Ù‰ Ø§Ù„Ø³ÙŠØ±ÙØ± Ø¨Ù†Ø¬Ø§Ø­. ${receiptStatus} â€” Ø±Ù‚Ù… Ø§Ù„Ù…ØªØ§Ø¨Ø¹Ø©: ${receiptTrackingToken}`;
-  document.getElementById("res-review-title").textContent = "ØªÙØ§ØµÙŠÙ„ Ø§Ù„ØªØ³Ù„ÙŠÙ…";
+  document.getElementById("res-score-label").textContent = "?????";
+  document.getElementById("res-wrong-label").textContent = "?????";
+  document.getElementById("res-total-label").textContent = "?????? ???????";
+  document.getElementById("res-msg").textContent = `?? ??????? ??? ??????? ?????. ${receiptStatus} ? ??? ????????: ${receiptTrackingToken}`;
+  document.getElementById("res-msg").style.overflowWrap = "anywhere";
+  document.getElementById("res-review-title").textContent = "?????? ???????";
   document.getElementById("res-review").innerHTML = `
     <div class="card" style="margin-bottom:14px;border-right:5px solid var(--gold)">
-      <div style="font-weight:800;color:var(--gd);margin-bottom:8px">âœ… ØªÙ… Ø§Ù„ØªØ³Ù„ÙŠÙ… ÙˆØ§Ù„ØªØµØ­ÙŠØ­ Ø¨Ù†Ø¬Ø§Ø­</div>
+      <div style="font-weight:800;color:var(--gd);margin-bottom:8px">? ?? ??????? ???????? ?????</div>
       <div style="color:var(--tm);font-size:14px;line-height:1.9">
-        Ø§Ù„ÙØµÙ„ / Ø§Ù„Ù…Ø¬Ù…ÙˆØ¹Ø©: ${escapeHtml(currentSubmissionReceipt.studentGroup || currentStudentGroup)}
+        ????? / ????????: ${escapeHtml(currentSubmissionReceipt.studentGroup || currentStudentGroup)}
         <br>
-        Ø¹Ø¯Ø¯ Ø§Ù„Ø£Ø³Ø¦Ù„Ø© Ø§Ù„Ù…Ø¬Ø§Ø¨ Ø¹Ù†Ù‡Ø§: ${receiptAnswered} Ù…Ù† ${receiptTotal}
+        ??? ??????? ??????? ????: ${receiptAnswered} ?? ${receiptTotal}
         <br>
-        ÙˆÙ‚Øª Ø§Ù„ØªØ³Ù„ÙŠÙ…: ${formatDate(currentSubmissionReceipt.submittedAt)}
+        ??? ???????: ${formatDate(currentSubmissionReceipt.submittedAt)}
         <br>
-        Ø±Ù‚Ù… Ø§Ù„Ù…ØªØ§Ø¨Ø¹Ø©: ${escapeHtml(receiptTrackingToken)}
+        ??? ????????:
+        <span style="overflow-wrap:anywhere;word-break:break-word">${escapeHtml(receiptTrackingToken)}</span>
       </div>
     </div>
     <div class="card" style="margin-bottom:14px;border-right:5px solid var(--gm)">
-      <div style="font-weight:800;color:var(--gd);margin-bottom:8px">ðŸ“Œ ØªØ°ÙƒÙŠØ±</div>
+      <div style="font-weight:800;color:var(--gd);margin-bottom:8px">?? ?????</div>
       <div style="color:var(--tm);font-size:14px;line-height:1.9">
-        ØªÙ… Ø­Ø³Ø§Ø¨ Ø§Ù„Ù†ØªÙŠØ¬Ø© Ø¹Ù„Ù‰ Ø§Ù„Ø³ÙŠØ±ÙØ±ØŒ ÙˆÙ„Ø§ ÙŠØªÙ… Ø¹Ø±Ø¶ Ø§Ù„Ø¥Ø¬Ø§Ø¨Ø§Øª Ø£Ùˆ Ù…ÙØ§ØªÙŠØ­ Ø§Ù„Ø­Ù„ Ù„Ù„Ø·Ø§Ù„Ø¨.
-      </div>
-    </div>
-  `;
-
-  showPage("pg-results");
-  return;
-
-  const total = currentSubmissionReceipt.totalQuestions;
-  const answered = currentSubmissionReceipt.answeredCount;
-  const unanswered = total - answered;
-
-  document.getElementById("res-heading").textContent = "تم استلام الإجابات";
-  document.getElementById("res-circle").className = "score-circle score-good";
-  document.getElementById("res-pct").textContent = "تم";
-  document.getElementById("res-circle-subtitle").textContent = "إرسال ناجح";
-  document.getElementById("res-emoji").textContent = "📨";
-  document.getElementById("res-name").textContent = currentStudent;
-  document.getElementById("res-exam-title").textContent = `${currentExam.title} — ${currentStudentGroup}`;
-  document.getElementById("res-score").textContent = answered;
-  document.getElementById("res-wrong").textContent = unanswered;
-  document.getElementById("res-total").textContent = total;
-  document.getElementById("res-score-label").textContent = "مجاب";
-  document.getElementById("res-wrong-label").textContent = "غير مجاب";
-  document.getElementById("res-total-label").textContent = "إجمالي الأسئلة";
-  document.getElementById("res-msg").textContent = "تم حفظ إجاباتك في Firebase بنجاح. التصحيح يظهر من لوحة المدرس.";
-  document.getElementById("res-review-title").textContent = "ماذا بعد؟";
-  document.getElementById("res-review").innerHTML = `
-    <div class="card" style="margin-bottom:14px;border-right:5px solid var(--gold)">
-      <div style="font-weight:800;color:var(--gd);margin-bottom:8px">✅ تم التسليم بنجاح</div>
-      <div style="color:var(--tm);font-size:14px;line-height:1.9">
-        الفصل / المجموعة: ${escapeHtml(currentStudentGroup)}
-        <br>
-        وقت التسليم: ${formatDate(currentSubmissionReceipt.submittedAt)}
-        <br>
-        تم إرسال إجاباتك إلى أ/ عمرو .
-      </div>
-    </div>
-    <div class="card" style="margin-bottom:14px;border-right:5px solid var(--gm)">
-      <div style="font-weight:800;color:var(--gd);margin-bottom:8px">📌 تذكير</div>
-      <div style="color:var(--tm);font-size:14px;line-height:1.9">
-        ل، لا يتم عرض الإجابة الصحيحة للطالب مباشرة حتى تبقى مفاتيح الحل خارج متناول الطلاب.
+        ?? ???? ??????? ??? ???????? ??? ??? ??? ???????? ?? ?????? ???? ??????.
       </div>
     </div>
   `;
@@ -3044,54 +3182,28 @@ function printStudentReceipt() {
   const receiptScore = Number(currentSubmissionReceipt.score || 0);
   const receiptWrong = Math.max(0, receiptTotal - receiptScore);
   const receiptPct = Number(currentSubmissionReceipt.pct || 0);
-  const receiptStatus = currentSubmissionReceipt.status || (receiptPct >= 50 ? "Ù†Ø§Ø¬Ø­" : "Ù„Ù… ÙŠØ¬ØªØ²");
-  const receiptTrackingToken = currentSubmissionReceipt.trackingToken || currentSubmissionReceipt.submissionId || "ØºÙŠØ± Ù…ØªØ§Ø­";
+  const receiptStatus = currentSubmissionReceipt.status || (receiptPct >= 50 ? "????" : "?? ????");
+  const receiptTrackingToken = currentSubmissionReceipt.trackingToken || currentSubmissionReceipt.submissionId || "??? ????";
 
-  openPrintWindow("Ø¥ÙŠØµØ§Ù„ ØªØ³Ù„ÙŠÙ… Ø§Ù„Ø§Ù…ØªØ­Ø§Ù†", `
+  openPrintWindow("????? ????? ????????", `
     <div class="print-card">
       <div style="font-size:20px;font-weight:800;margin-bottom:8px">${escapeHtml(currentSubmissionReceipt.studentName)}</div>
       <div style="color:#555;line-height:1.9">
-        Ø§Ù„Ø§Ù…ØªØ­Ø§Ù†: ${escapeHtml(currentSubmissionReceipt.examTitle)}
+        ????????: ${escapeHtml(currentSubmissionReceipt.examTitle)}
         <br>
-        Ø§Ù„ÙØµÙ„ / Ø§Ù„Ù…Ø¬Ù…ÙˆØ¹Ø©: ${escapeHtml(currentSubmissionReceipt.studentGroup)}
+        ????? / ????????: ${escapeHtml(currentSubmissionReceipt.studentGroup)}
         <br>
-        ÙˆÙ‚Øª Ø§Ù„ØªØ³Ù„ÙŠÙ…: ${formatDate(currentSubmissionReceipt.submittedAt)}
+        ??? ???????: ${formatDate(currentSubmissionReceipt.submittedAt)}
         <br>
-        Ø±Ù‚Ù… Ø§Ù„Ù…ØªØ§Ø¨Ø¹Ø©: ${escapeHtml(receiptTrackingToken)}
+        ??? ????????: <span style="overflow-wrap:anywhere;word-break:break-word">${escapeHtml(receiptTrackingToken)}</span>
       </div>
       <div class="print-grid">
-        <div class="print-stat"><strong>${receiptScore}</strong><span>Ø§Ù„Ø¯Ø±Ø¬Ø©</span></div>
-        <div class="print-stat"><strong>${receiptWrong}</strong><span>Ø£Ø®Ø·Ø§Ø¡</span></div>
+        <div class="print-stat"><strong>${receiptScore}</strong><span>??????</span></div>
+        <div class="print-stat"><strong>${receiptWrong}</strong><span>?????</span></div>
         <div class="print-stat"><strong>${receiptPct}%</strong><span>${escapeHtml(receiptStatus)}</span></div>
       </div>
       <div style="color:#666;line-height:1.9">
-        ØªÙ… Ø§Ù„ØªØµØ­ÙŠØ­ Ø¹Ù„Ù‰ Ø§Ù„Ø³ÙŠØ±ÙØ±ØŒ ÙˆÙ„Ø§ ÙŠØªÙ… Ø¹Ø±Ø¶ Ø§Ù„Ø¥Ø¬Ø§Ø¨Ø§Øª Ø£Ùˆ Ù…ÙØ§ØªÙŠØ­ Ø§Ù„Ø­Ù„ ÙÙŠ Ù‡Ø°Ø§ Ø§Ù„Ø¥ÙŠØµØ§Ù„.
-      </div>
-    </div>
-  `);
-  return;
-
-  const total = currentSubmissionReceipt.totalQuestions;
-  const answered = currentSubmissionReceipt.answeredCount;
-  const unanswered = total - answered;
-
-  openPrintWindow("إيصال تسليم الامتحان", `
-    <div class="print-card">
-      <div style="font-size:20px;font-weight:800;margin-bottom:8px">${escapeHtml(currentSubmissionReceipt.studentName)}</div>
-      <div style="color:#555;line-height:1.9">
-        الامتحان: ${escapeHtml(currentSubmissionReceipt.examTitle)}
-        <br>
-        الفصل / المجموعة: ${escapeHtml(currentSubmissionReceipt.studentGroup)}
-        <br>
-        وقت التسليم: ${formatDate(currentSubmissionReceipt.submittedAt)}
-      </div>
-      <div class="print-grid">
-        <div class="print-stat"><strong>${answered}</strong><span>مجاب</span></div>
-        <div class="print-stat"><strong>${unanswered}</strong><span>غير مجاب</span></div>
-        <div class="print-stat"><strong>${total}</strong><span>إجمالي الأسئلة</span></div>
-      </div>
-      <div style="color:#666;line-height:1.9">
-        هذه النسخة المجانية تحفظ الإجابات مركزيًا وتتيح للمدرس مراجعتها من لوحة التحكم.
+        ?? ??????? ??? ???????? ??? ??? ??? ???????? ?? ?????? ???? ?? ??? ???????.
       </div>
     </div>
   `);
@@ -3119,21 +3231,21 @@ function renderPublishedResult(result) {
   };
 
   document.getElementById("sr-emoji").textContent = statusView.emoji;
-  document.getElementById("sr-heading").textContent = "نتيجة الطالب";
+  document.getElementById("sr-heading").textContent = "????? ??????";
   document.getElementById("sr-circle").className = `score-circle ${pct >= 50 ? "score-good" : "score-fail"}`;
   document.getElementById("sr-pct").textContent = `${pct}%`;
   document.getElementById("sr-circle-subtitle").textContent = statusLabel;
   document.getElementById("sr-name").textContent = currentPublishedResult.studentName;
-  document.getElementById("sr-exam-title").textContent = `${currentPublishedResult.examTitle} — ${currentPublishedResult.studentGroup}`;
+  document.getElementById("sr-exam-title").textContent = `${currentPublishedResult.examTitle} ? ${currentPublishedResult.studentGroup}`;
   document.getElementById("sr-score").textContent = score;
   document.getElementById("sr-total").textContent = total;
   document.getElementById("sr-status").textContent = statusLabel;
 
   const publishedLabel = currentPublishedResult.publishedAt
-    ? `تم نشر هذه النتيجة في ${formatDate(currentPublishedResult.publishedAt)}.`
-    : "تم اعتماد هذه النتيجة بواسطة المدرس.";
+    ? `?? ??? ??? ??????? ?? ${formatDate(currentPublishedResult.publishedAt)}.`
+    : "?? ?????? ??? ??????? ?????? ??????.";
   const submittedLabel = currentPublishedResult.submittedAt
-    ? `وقت التسليم: ${formatDate(currentPublishedResult.submittedAt)}.`
+    ? `??? ???????: ${formatDate(currentPublishedResult.submittedAt)}.`
     : "";
 
   document.getElementById("sr-msg").textContent = `${publishedLabel} ${submittedLabel}`.trim();
@@ -3180,30 +3292,30 @@ async function lookupPublishedResult() {
 
 function printPublishedResult() {
   if (!currentPublishedResult) {
-    alert("افتح النتيجة أولًا ثم اطبعها.");
+    alert("???? ??????? ????? ?? ??????.");
     return;
   }
 
-  openPrintWindow(`نتيجة ${currentPublishedResult.studentName}`, `
+  openPrintWindow(`????? ${currentPublishedResult.studentName}`, `
     <div class="print-card">
       <div style="font-size:20px;font-weight:800;margin-bottom:8px">${escapeHtml(currentPublishedResult.studentName)}</div>
       <div style="color:#555;line-height:1.9">
-        الامتحان: ${escapeHtml(currentPublishedResult.examTitle)}
+        ????????: ${escapeHtml(currentPublishedResult.examTitle)}
         <br>
-        الفصل / المجموعة: ${escapeHtml(currentPublishedResult.studentGroup)}
+        ????? / ????????: ${escapeHtml(currentPublishedResult.studentGroup)}
         <br>
-        كود الامتحان: ${escapeHtml(currentPublishedResult.examCode)}
+        ??? ????????: ${escapeHtml(currentPublishedResult.examCode)}
         <br>
-        ${currentPublishedResult.submittedAt ? `وقت التسليم: ${formatDate(currentPublishedResult.submittedAt)}` : ""}
-        ${currentPublishedResult.publishedAt ? `<br>وقت النشر: ${formatDate(currentPublishedResult.publishedAt)}` : ""}
+        ${currentPublishedResult.submittedAt ? `??? ???????: ${formatDate(currentPublishedResult.submittedAt)}` : ""}
+        ${currentPublishedResult.publishedAt ? `<br>??? ?????: ${formatDate(currentPublishedResult.publishedAt)}` : ""}
       </div>
       <div class="print-grid">
-        <div class="print-stat"><strong>${currentPublishedResult.score}</strong><span>الدرجة</span></div>
-        <div class="print-stat"><strong>${currentPublishedResult.total}</strong><span>إجمالي الأسئلة</span></div>
+        <div class="print-stat"><strong>${currentPublishedResult.score}</strong><span>??????</span></div>
+        <div class="print-stat"><strong>${currentPublishedResult.total}</strong><span>?????? ???????</span></div>
         <div class="print-stat"><strong>${currentPublishedResult.pct}%</strong><span>${escapeHtml(currentPublishedResult.status)}</span></div>
       </div>
       <div style="color:#666;line-height:1.9">
-        هذه نسخة مخصصة لعرض النتيجة فقط، ولا تتضمن أي إجابات أو مفاتيح تصحيح.
+        ??? ???? ????? ???? ??????? ???? ??? ????? ?? ?????? ?? ?????? ?????.
       </div>
     </div>
   `);

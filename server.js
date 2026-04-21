@@ -189,6 +189,25 @@ function createHttpError(status, message) {
   return error;
 }
 
+function createDebugRequestId(prefix = 'req') {
+  return `${prefix}-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+}
+
+function summarizeQuestionBankPayload(body = {}) {
+  const questions = Array.isArray(body?.questions) ? body.questions : [];
+
+  return {
+    title: typeof body?.title === 'string' ? body.title : '',
+    descriptionLength: typeof body?.description === 'string' ? body.description.length : 0,
+    questionCount: questions.length,
+    questionIds: questions.map((question) => question?.id).filter(Boolean)
+  };
+}
+
+function logQuestionBankOp(event, payload = {}) {
+  console.log(`[question-bank] ${new Date().toISOString()} ${event} ${JSON.stringify(payload)}`);
+}
+
 function normalizeOrigin(origin) {
   if (!origin) {
     return '';
@@ -1351,13 +1370,20 @@ async function getQuestionBankRecord(bankId) {
   return mapQuestionBankRecord(normalizedBankId, snapshot.val());
 }
 
-async function listQuestionBanks() {
+async function listQuestionBanks(debugMeta = {}) {
   const snapshot = await database.ref(firebasePath('questionBanks')).get();
   const banksMap = snapshot.exists() ? snapshot.val() : {};
-
-  return Object.entries(banksMap)
+  const banks = Object.entries(banksMap)
     .map(([bankId, bank]) => mapQuestionBankRecord(bankId, bank))
     .sort((first, second) => Number(second.updatedAt || second.createdAt || 0) - Number(first.updatedAt || first.createdAt || 0));
+
+  logQuestionBankOp('list', {
+    requestId: debugMeta.requestId || null,
+    count: banks.length,
+    ids: banks.map((bank) => bank.id)
+  });
+
+  return banks;
 }
 
 function sanitizeQuestionBankPayload(body = {}) {
@@ -1389,47 +1415,105 @@ function sanitizeQuestionBankPayload(body = {}) {
   };
 }
 
-async function createQuestionBank(body) {
+async function createQuestionBank(body, debugMeta = {}) {
   const payload = sanitizeQuestionBankPayload(body);
   const bankId = database.ref(firebasePath('questionBanks')).push().key || createId('bank');
   const timestamp = admin.database.ServerValue.TIMESTAMP;
   const finalizedQuestions = await finalizeQuestionAttachments(payload.questions, 'question-banks', bankId);
+  const questionBankRef = database.ref(firebasePath('questionBanks', bankId));
 
-  await database.ref(firebasePath('questionBanks', bankId)).set({
+  logQuestionBankOp('create:before-write', {
+    requestId: debugMeta.requestId || null,
+    bankId,
+    payload: summarizeQuestionBankPayload(payload)
+  });
+
+  await questionBankRef.set({
     title: payload.title,
     description: payload.description,
     questions: finalizedQuestions,
     createdAt: timestamp,
     updatedAt: timestamp
   });
+  const createdBank = await getQuestionBankRecord(bankId);
 
-  return getQuestionBankRecord(bankId);
+  logQuestionBankOp('create:after-write', {
+    requestId: debugMeta.requestId || null,
+    bankId,
+    questionCount: createdBank.questionCount,
+    updatedAt: createdBank.updatedAt || createdBank.createdAt || null
+  });
+
+  return createdBank;
 }
 
-async function updateQuestionBank(bankId, body) {
+async function updateQuestionBank(bankId, body, debugMeta = {}) {
   const existingBank = await getQuestionBankRecord(bankId);
   const payload = sanitizeQuestionBankPayload(body);
   const timestamp = admin.database.ServerValue.TIMESTAMP;
   const finalizedQuestions = await finalizeQuestionAttachments(payload.questions, 'question-banks', existingBank.id);
   const removedAttachmentPaths = getRemovedAttachmentStoragePaths(existingBank.questions, finalizedQuestions);
+  const expectedUpdatedAt = Number(body?.expectedUpdatedAt || 0);
+  const currentUpdatedAt = Number(existingBank.updatedAt || existingBank.createdAt || 0);
 
-  await database.ref(firebasePath('questionBanks', existingBank.id)).set({
+  logQuestionBankOp('update:before-write', {
+    requestId: debugMeta.requestId || null,
+    bankId: existingBank.id,
+    expectedUpdatedAt,
+    currentUpdatedAt,
+    previousQuestionCount: existingBank.questionCount,
+    previousQuestionIds: existingBank.questions.map((question) => question.id),
+    payload: summarizeQuestionBankPayload(payload)
+  });
+
+  if (expectedUpdatedAt && currentUpdatedAt && expectedUpdatedAt !== currentUpdatedAt) {
+    logQuestionBankOp('update:stale-write-blocked', {
+      requestId: debugMeta.requestId || null,
+      bankId: existingBank.id,
+      expectedUpdatedAt,
+      currentUpdatedAt
+    });
+    throw createHttpError(409, 'تم تعديل بنك الأسئلة من جلسة أخرى. أعد تحميل البنوك ثم جرّب الحفظ مرة أخرى.');
+  }
+
+  await database.ref(firebasePath('questionBanks', existingBank.id)).update({
     title: payload.title,
     description: payload.description,
     questions: finalizedQuestions,
-    createdAt: existingBank.createdAt || timestamp,
     updatedAt: timestamp
   });
   await deleteStorageFiles(removedAttachmentPaths);
+  const updatedBank = await getQuestionBankRecord(existingBank.id);
 
-  return getQuestionBankRecord(existingBank.id);
+  logQuestionBankOp('update:after-write', {
+    requestId: debugMeta.requestId || null,
+    bankId: existingBank.id,
+    previousQuestionCount: existingBank.questionCount,
+    nextQuestionCount: updatedBank.questionCount,
+    updatedAt: updatedBank.updatedAt || updatedBank.createdAt || null
+  });
+
+  return updatedBank;
 }
 
-async function deleteQuestionBankRecord(bankId) {
+async function deleteQuestionBankRecord(bankId, debugMeta = {}) {
   const existingBank = await getQuestionBankRecord(bankId);
   const attachmentPaths = extractAttachmentStoragePathsFromQuestions(existingBank.questions);
+
+  logQuestionBankOp('delete:before-write', {
+    requestId: debugMeta.requestId || null,
+    bankId: existingBank.id,
+    questionCount: existingBank.questionCount,
+    questionIds: existingBank.questions.map((question) => question.id)
+  });
+
   await database.ref(firebasePath('questionBanks', existingBank.id)).remove();
   await deleteStorageFiles(attachmentPaths);
+
+  logQuestionBankOp('delete:after-write', {
+    requestId: debugMeta.requestId || null,
+    bankId: existingBank.id
+  });
 }
 
 async function addQuestionToBank(bankId, body = {}) {
@@ -1515,7 +1599,7 @@ async function deleteBankQuestion(bankId, questionId) {
   };
 }
 
-async function importQuestionBankQuestions(bankId, body = {}) {
+async function importQuestionBankQuestions(bankId, body = {}, debugMeta = {}) {
   const bank = await getQuestionBankRecord(bankId);
   const requestedQuestionIds = Array.isArray(body.questionIds)
     ? body.questionIds
@@ -1534,6 +1618,13 @@ async function importQuestionBankQuestions(bankId, body = {}) {
   if (!sourceQuestions.length) {
     throw createHttpError(400, 'لا توجد أسئلة متاحة للاستيراد من هذا البنك.');
   }
+
+  logQuestionBankOp('import:read-only', {
+    requestId: debugMeta.requestId || null,
+    bankId: bank.id,
+    requestedQuestionIds,
+    returnedQuestionIds: sourceQuestions.map((question) => question.id)
+  });
 
   return {
     questions: sourceQuestions.map((question) => ({
@@ -1666,7 +1757,7 @@ function requireValidStudentResultToken(token) {
   const payload = readSignedStudentToken(token);
 
   if (!payload || payload.type !== 'student_result' || !payload.examId || !payload.submissionId || !payload.studentKey) {
-    throw createHttpError(401, 'Ø¨ÙŠØ§Ù†Ø§Øª Ù…ØªØ§Ø¨Ø¹Ø© Ø§Ù„Ù†ØªÙŠØ¬Ø© ØºÙŠØ± ØµØ­ÙŠØ­Ø©.');
+    throw createHttpError(401, 'بيانات متابعة النتيجة غير صحيحة.');
   }
 
   return payload;
@@ -1697,11 +1788,11 @@ async function getActiveExamById(examId) {
 }
 
 async function getExamRecordById(examId) {
-  const normalizedExamId = sanitizeText(examId, 'Ù…Ø¹Ø±Ù Ø§Ù„Ø§Ù…ØªØ­Ø§Ù†', 120);
+  const normalizedExamId = sanitizeText(examId, 'معرف الامتحان', 120);
   const snapshot = await database.ref(firebasePath('examsPublic', normalizedExamId)).get();
 
   if (!snapshot.exists()) {
-    throw createHttpError(404, 'Ø§Ù„Ø§Ù…ØªØ­Ø§Ù† Ø§Ù„Ù…Ø·Ù„ÙˆØ¨ ØºÙŠØ± Ù…ÙˆØ¬ÙˆØ¯.');
+    throw createHttpError(404, 'الامتحان المطلوب غير موجود.');
   }
 
   return {
@@ -1928,14 +2019,14 @@ async function lookupPublishedStudentResult(body = {}) {
   const trackingToken = String(body.trackingToken || body.token || '').trim();
 
   if (!code || !trackingToken) {
-    throw createHttpError(400, 'Ø£Ø¯Ø®Ù„ ÙƒÙˆØ¯ Ø§Ù„Ø§Ù…ØªØ­Ø§Ù† ÙˆØ±Ù‚Ù… Ù…ØªØ§Ø¨Ø¹Ø© Ø§Ù„Ù†ØªÙŠØ¬Ø©.');
+    throw createHttpError(400, 'أدخل كود الامتحان ورقم متابعة النتيجة.');
   }
 
   const tokenPayload = requireValidStudentResultToken(trackingToken);
   const exam = await getExamRecordById(tokenPayload.examId);
 
   if (sanitizeCode(exam.code) !== code) {
-    throw createHttpError(404, 'Ù„Ù… ÙŠØªÙ… Ø§Ù„Ø¹Ø«ÙˆØ± Ø¹Ù„Ù‰ Ù†ØªÙŠØ¬Ø© Ù…Ù†Ø´ÙˆØ±Ø© Ø¨Ù‡Ø°Ù‡ Ø§Ù„Ø¨ÙŠØ§Ù†Ø§Øª.');
+    throw createHttpError(404, 'لم يتم العثور على نتيجة منشورة بهذه البيانات.');
   }
 
   const [submissionSnapshot, publishedSnapshot] = await Promise.all([
@@ -1944,13 +2035,13 @@ async function lookupPublishedStudentResult(body = {}) {
   ]);
 
   if (!submissionSnapshot.exists() || !publishedSnapshot.exists()) {
-    throw createHttpError(404, 'Ù„Ù… ÙŠØªÙ… Ø§Ù„Ø¹Ø«ÙˆØ± Ø¹Ù„Ù‰ Ù†ØªÙŠØ¬Ø© Ù…Ù†Ø´ÙˆØ±Ø© Ø¨Ù‡Ø°Ù‡ Ø§Ù„Ø¨ÙŠØ§Ù†Ø§Øª.');
+    throw createHttpError(404, 'لم يتم العثور على نتيجة منشورة بهذه البيانات.');
   }
 
   const submission = submissionSnapshot.val();
 
   if (!submission || submission.studentKey !== tokenPayload.studentKey) {
-    throw createHttpError(403, 'Ù„Ø§ ØªÙ…Ù„Ùƒ ØµÙ„Ø§Ø­ÙŠØ© Ø¹Ø±Ø¶ Ù‡Ø°Ù‡ Ø§Ù„Ù†ØªÙŠØ¬Ø©.');
+    throw createHttpError(403, 'لا تملك صلاحية عرض هذه النتيجة.');
   }
 
   return {
@@ -2206,7 +2297,8 @@ async function handleRequest(request, response) {
 
     if (request.method === 'GET' && pathname === '/api/admin/question-banks') {
       requireAdmin(request);
-      const banks = await listQuestionBanks();
+      const requestId = createDebugRequestId('qb-list');
+      const banks = await listQuestionBanks({ requestId });
       sendJson(response, 200, { banks });
       return;
     }
@@ -2214,7 +2306,14 @@ async function handleRequest(request, response) {
     if (request.method === 'POST' && pathname === '/api/admin/question-banks') {
       requireAdmin(request);
       const body = await readJsonBody(request);
-      const bank = await createQuestionBank(body);
+      const requestId = typeof body?.debugRequestId === 'string' && body.debugRequestId.trim()
+        ? body.debugRequestId.trim()
+        : createDebugRequestId('qb-create');
+      logQuestionBankOp('route:create', {
+        requestId,
+        payload: summarizeQuestionBankPayload(body)
+      });
+      const bank = await createQuestionBank(body, { requestId });
       sendJson(response, 201, { bank });
       return;
     }
@@ -2275,7 +2374,15 @@ async function handleRequest(request, response) {
       requireAdmin(request);
       const bankId = bankImportMatch[1];
       const body = await readJsonBody(request);
-      const payload = await importQuestionBankQuestions(bankId, body);
+      const requestId = typeof body?.debugRequestId === 'string' && body.debugRequestId.trim()
+        ? body.debugRequestId.trim()
+        : createDebugRequestId('qb-import');
+      logQuestionBankOp('route:import', {
+        requestId,
+        bankId,
+        requestedQuestionIds: Array.isArray(body?.questionIds) ? body.questionIds : []
+      });
+      const payload = await importQuestionBankQuestions(bankId, body, { requestId });
       sendJson(response, 200, payload);
       return;
     }
@@ -2292,14 +2399,31 @@ async function handleRequest(request, response) {
     if (request.method === 'PATCH' && bankItemMatch) {
       requireAdmin(request);
       const body = await readJsonBody(request);
-      const bank = await updateQuestionBank(bankItemMatch[1], body);
+      const requestId = typeof body?.debugRequestId === 'string' && body.debugRequestId.trim()
+        ? body.debugRequestId.trim()
+        : createDebugRequestId('qb-update');
+      logQuestionBankOp('route:update', {
+        requestId,
+        bankId: bankItemMatch[1],
+        expectedUpdatedAt: Number(body?.expectedUpdatedAt || 0),
+        payload: summarizeQuestionBankPayload(body)
+      });
+      const bank = await updateQuestionBank(bankItemMatch[1], body, { requestId });
       sendJson(response, 200, { bank });
       return;
     }
 
     if (request.method === 'DELETE' && bankItemMatch) {
       requireAdmin(request);
-      await deleteQuestionBankRecord(bankItemMatch[1]);
+      const body = await readJsonBody(request);
+      const requestId = typeof body?.debugRequestId === 'string' && body.debugRequestId.trim()
+        ? body.debugRequestId.trim()
+        : createDebugRequestId('qb-delete');
+      logQuestionBankOp('route:delete', {
+        requestId,
+        bankId: bankItemMatch[1]
+      });
+      await deleteQuestionBankRecord(bankItemMatch[1], { requestId });
       sendJson(response, 200, { success: true });
       return;
     }
