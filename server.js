@@ -1658,7 +1658,7 @@ function buildStudentKey(studentName, studentGroup) {
 
 function sanitizeStudentIdentity(body = {}) {
   const studentName = sanitizeText(body.studentName ?? body.name, 'اسم الطالب', 120);
-  const studentGroup = sanitizeText(body.studentGroup ?? body.group, 'الفصل / المجموعة', 120);
+  const studentGroup = sanitizeOptionalText(body.studentGroup ?? body.group, 'الفصل / المجموعة', 120);
 
   return {
     studentName,

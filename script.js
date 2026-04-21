@@ -27,6 +27,8 @@ let currentStudentGroup = "";
 let currentSubmissionReceipt = null;
 let currentPublishedResult = null;
 let linkedExam = null;
+let studentEntryStep = 1;
+let isLinkedExamLoading = false;
 let studentAnswers = [];
 let examTimerInterval = null;
 let examAutoSaveInterval = null;
@@ -1202,31 +1204,168 @@ function buildExamShareLink(examId) {
   return url.toString();
 }
 
-function updateHomeEntryMode() {
+function hasDirectExamLink() {
+  return new URLSearchParams(window.location.search).has("exam");
+}
+
+function hasStudentGroup(group) {
+  return Boolean(String(group || "").trim());
+}
+
+function formatStudentHeaderLine(studentName, studentGroup) {
+  return hasStudentGroup(studentGroup)
+    ? `👤 ${studentName} • ${studentGroup}`
+    : `👤 ${studentName}`;
+}
+
+function formatExamPreviewTitle(examTitle, studentGroup) {
+  return hasStudentGroup(studentGroup)
+    ? `${examTitle} - ${studentGroup}`
+    : examTitle;
+}
+
+function buildOptionalGroupMarkup(studentGroup, prefix = "الفصل / المجموعة") {
+  if (!hasStudentGroup(studentGroup)) {
+    return "";
+  }
+
+  return `${prefix}: ${escapeHtml(studentGroup)}`;
+}
+
+function getExamTeacherName(exam = {}) {
+  return sanitizePlainText(
+    exam.teacherName || exam.teacherDisplayName || exam.instructorName || exam.ownerName,
+    "أ/ عمرو شعبان"
+  );
+}
+
+function renderStudentEntryStepper() {
+  document.querySelectorAll("#h-stepper .student-step-indicator").forEach((indicator) => {
+    const step = Number(indicator.dataset.step || 0);
+    indicator.classList.toggle("is-active", step === studentEntryStep);
+    indicator.classList.toggle("is-complete", step < studentEntryStep);
+  });
+}
+
+function goStudentEntryStep(step) {
+  const nextStep = Number(step || 1);
+  const stepOne = document.getElementById("h-step-1");
+  const stepTwo = document.getElementById("h-step-2");
+
+  if (!stepOne || !stepTwo) {
+    return;
+  }
+
+  if (nextStep === 2 && !linkedExam) {
+    return;
+  }
+
+  studentEntryStep = nextStep === 2 ? 2 : 1;
+
+  const isStepOneActive = studentEntryStep === 1;
+  stepOne.hidden = !isStepOneActive;
+  stepTwo.hidden = isStepOneActive;
+  stepOne.classList.toggle("active", isStepOneActive);
+  stepTwo.classList.toggle("active", !isStepOneActive);
+
+  renderStudentEntryStepper();
+
+  if (studentEntryStep === 2) {
+    document.getElementById("h-name")?.focus();
+  } else if (linkedExam) {
+    document.getElementById("h-continue-btn")?.focus();
+  } else {
+    document.getElementById("h-code")?.focus();
+  }
+}
+
+function renderLinkedExamPreview() {
   const linkedCard = document.getElementById("h-linked-card");
-  const codeWrap = document.getElementById("h-code-wrap");
   const linkedTitle = document.getElementById("h-linked-title");
   const linkedMeta = document.getElementById("h-linked-meta");
   const linkedLink = document.getElementById("h-linked-link");
-  const subtitle = document.getElementById("h-subtitle");
+  const linkedQuestions = document.getElementById("h-linked-questions");
+  const linkedDuration = document.getElementById("h-linked-duration");
+  const linkedStatus = document.getElementById("h-linked-status");
+  const linkedTeacher = document.getElementById("h-linked-teacher");
+  const linkedLogo = document.getElementById("h-linked-logo");
+  const selectedExamMini = document.getElementById("h-selected-exam-mini");
 
-  if (!linkedCard || !codeWrap || !linkedTitle || !linkedMeta || !linkedLink || !subtitle) {
+  if (!linkedCard || !linkedTitle || !linkedMeta || !linkedLink || !linkedQuestions || !linkedDuration || !linkedStatus || !linkedTeacher || !linkedLogo || !selectedExamMini) {
+    return;
+  }
+
+  if (!linkedExam) {
+    linkedCard.style.display = "none";
+    selectedExamMini.innerHTML = "";
+    return;
+  }
+
+  const linkedQuestionCount = Number(linkedExam.questionCount || linkedExam.questions?.length || 0);
+  const teacherName = getExamTeacherName(linkedExam);
+  const isActive = linkedExam.active !== false;
+  const statusLabel = isActive ? "متاح الآن" : "مغلق";
+  const safeExamCode = sanitizePlainText(linkedExam.code || "", "");
+  const accessModeLabel = hasDirectExamLink()
+    ? "تم فتح الامتحان من الرابط المباشر"
+    : safeExamCode
+      ? `كود الامتحان: ${safeExamCode}`
+      : "تم التحقق من الامتحان بنجاح";
+
+  linkedCard.style.display = "block";
+  linkedTitle.textContent = linkedExam.title;
+  linkedMeta.textContent = "راجع بيانات الامتحان جيدًا قبل إدخال اسمك والبدء.";
+  linkedQuestions.textContent = `${linkedQuestionCount} سؤال`;
+  linkedDuration.textContent = `${Number(linkedExam.duration || 0)} دقيقة`;
+  linkedStatus.textContent = statusLabel;
+  linkedTeacher.textContent = teacherName;
+  linkedLogo.textContent = teacherName.replace(/^أ\/\s*/, "").trim().charAt(0) || "ع";
+  linkedLink.textContent = accessModeLabel;
+  selectedExamMini.innerHTML = `
+    <span class="student-selected-exam-mini-label">الامتحان المحدد</span>
+    <strong>${escapeHtml(linkedExam.title)}</strong>
+    <span>${linkedQuestionCount} سؤال • ${Number(linkedExam.duration || 0)} دقيقة</span>
+  `;
+}
+
+function updateStudentContinueButton() {
+  const continueButton = document.getElementById("h-continue-btn");
+  const changeExamButton = document.getElementById("h-change-exam-btn");
+
+  if (!continueButton || !changeExamButton) {
+    return;
+  }
+
+  continueButton.textContent = linkedExam ? "متابعة ←" : "التحقق من الامتحان ←";
+  changeExamButton.style.display = linkedExam && !hasDirectExamLink() ? "inline-flex" : "none";
+}
+
+function updateHomeEntryMode() {
+  const codeWrap = document.getElementById("h-code-wrap");
+  const subtitle = document.getElementById("h-subtitle");
+  const stepOneText = document.getElementById("h-step-1-text");
+
+  if (!codeWrap || !subtitle || !stepOneText) {
     return;
   }
 
   if (linkedExam) {
-    linkedCard.style.display = "block";
-    linkedTitle.textContent = linkedExam.title;
-    const linkedQuestionCount = Number(linkedExam.questionCount || linkedExam.questions?.length || 0);
-    linkedMeta.textContent = `⏱ ${linkedExam.duration} دقيقة • ❓ ${linkedExam.questions.length} سؤال`;
-    linkedLink.textContent = buildExamShareLink(linkedExam.id);
     codeWrap.style.display = "none";
-    subtitle.textContent = "اكتب بياناتك ثم ابدأ الامتحان مباشرة من الرابط الذي أرسله المدرس.";
+    subtitle.textContent = hasDirectExamLink()
+      ? "تم التعرف على الامتحان من الرابط المباشر. انتقل الآن إلى كتابة اسمك ثم ابدأ مباشرة."
+      : "تم العثور على الامتحان بنجاح. راجع البطاقة ثم اضغط متابعة للانتقال إلى كتابة اسمك.";
+    stepOneText.textContent = hasDirectExamLink()
+      ? "تم جلب بيانات الامتحان من الرابط المباشر. راجع البطاقة ثم اضغط متابعة."
+      : "تم التحقق من الكود بنجاح. تأكد من اسم الامتحان وعدد الأسئلة والوقت قبل المتابعة.";
   } else {
-    linkedCard.style.display = "none";
     codeWrap.style.display = "block";
-    subtitle.textContent = "أدخل بياناتك وكود الامتحان ثم ابدأ مباشرة.";
+    subtitle.textContent = "ابدأ بإدخال كود الامتحان فقط. بعد التأكد من بياناته ستنتقل إلى خطوة كتابة الاسم.";
+    stepOneText.textContent = "أدخل كود الامتحان أولًا لإظهار بطاقة المعاينة، ثم انتقل إلى خطوة إدخال الاسم.";
   }
+
+  renderLinkedExamPreview();
+  updateStudentContinueButton();
+  renderStudentEntryStepper();
 }
 
 async function loadLinkedExamFromUrl() {
@@ -1260,7 +1399,233 @@ async function loadLinkedExamFromUrl() {
     showErr(document.getElementById("h-err"), mapFirebaseError(error, "تعذر فتح رابط الامتحان المباشر."));
   } finally {
     updateHomeEntryMode();
+    goStudentEntryStep(1);
   }
+}
+
+async function continueStudentEntry() {
+  const rawCode = document.getElementById("h-code").value;
+  const code = rawCode.trim() ? sanitizeCode(rawCode) : "";
+  const err = document.getElementById("h-err");
+  const continueButton = document.getElementById("h-continue-btn");
+
+  hideErr("h-err");
+
+  if (linkedExam) {
+    goStudentEntryStep(2);
+    return;
+  }
+
+  if (!code) {
+    showErr(err, "أدخل كود الامتحان أولًا للمتابعة.");
+    return;
+  }
+
+  setButtonLoading(continueButton, true, "جارٍ التحقق من الامتحان...");
+
+  try {
+    const accessPayload = await requestServerJson("/api/student/exam-access", {
+      method: "POST",
+      body: JSON.stringify({ code })
+    });
+
+    if (!accessPayload?.exam?.id) {
+      throw new Error("كود الامتحان غير صحيح أو الامتحان غير متاح الآن.");
+    }
+
+    linkedExam = {
+      ...accessPayload.exam,
+      questions: new Array(Number(accessPayload.exam.questionCount || 0))
+    };
+    document.getElementById("h-code").value = code;
+    updateHomeEntryMode();
+  } catch (error) {
+    linkedExam = null;
+    updateHomeEntryMode();
+    showErr(err, mapFirebaseError(error, "تعذر التعرف على الامتحان."));
+  } finally {
+    setButtonLoading(continueButton, false);
+  }
+}
+
+function resetStudentExamSelection() {
+  if (hasDirectExamLink()) {
+    return;
+  }
+
+  linkedExam = null;
+  document.getElementById("h-code").focus();
+  updateHomeEntryMode();
+  goStudentEntryStep(1);
+}
+
+function updateStudentContinueButton() {
+  const continueButton = document.getElementById("h-continue-btn");
+  const changeExamButton = document.getElementById("h-change-exam-btn");
+
+  if (!continueButton || !changeExamButton) {
+    return;
+  }
+
+  if (linkedExam) {
+    continueButton.textContent = "متابعة ←";
+  } else if (hasDirectExamLink()) {
+    continueButton.textContent = isLinkedExamLoading ? "جارٍ تجهيز الامتحان..." : "إعادة التحقق من الرابط ←";
+  } else {
+    continueButton.textContent = "التحقق من الامتحان ←";
+  }
+
+  continueButton.disabled = Boolean(isLinkedExamLoading);
+  changeExamButton.style.display = linkedExam && !hasDirectExamLink() ? "inline-flex" : "none";
+}
+
+function updateHomeEntryMode() {
+  const codeWrap = document.getElementById("h-code-wrap");
+  const subtitle = document.getElementById("h-subtitle");
+  const stepOneText = document.getElementById("h-step-1-text");
+  const linkedCard = document.getElementById("h-linked-card");
+
+  if (!codeWrap || !subtitle || !stepOneText || !linkedCard) {
+    return;
+  }
+
+  if (linkedExam) {
+    codeWrap.style.display = "none";
+    subtitle.textContent = hasDirectExamLink()
+      ? "تم التعرّف على الامتحان من الرابط المباشر. راجع البطاقة ثم انتقل إلى كتابة اسمك للبدء."
+      : "تم العثور على الامتحان بنجاح. راجع البطاقة ثم اضغط متابعة للانتقال إلى كتابة اسمك.";
+    stepOneText.textContent = hasDirectExamLink()
+      ? "هذه البطاقة تعرض لك بيانات الامتحان القادمة من الرابط المباشر قبل بدء الاختبار."
+      : "بعد التحقق من الكود يمكنك مراجعة اسم الامتحان وعدد الأسئلة والوقت ثم الانتقال للخطوة التالية.";
+  } else if (hasDirectExamLink()) {
+    codeWrap.style.display = "none";
+    linkedCard.style.display = "none";
+    subtitle.textContent = isLinkedExamLoading
+      ? "جارٍ تجهيز بيانات الامتحان من الرابط المباشر."
+      : "تعذر جلب بيانات الامتحان من الرابط المباشر. حاول إعادة التحقق من الرابط.";
+    stepOneText.textContent = isLinkedExamLoading
+      ? "لن تحتاج إلى إدخال أي كود هنا. انتظر لحظة حتى تظهر بطاقة معاينة الامتحان."
+      : "إذا كان الرابط صحيحًا فاضغط إعادة التحقق من الرابط، أو اطلب من المدرس إرسال رابط صالح.";
+  } else {
+    codeWrap.style.display = "block";
+    subtitle.textContent = "ابدأ بإدخال كود الامتحان فقط. بعد التحقق من بياناته ستنتقل إلى خطوة كتابة الاسم.";
+    stepOneText.textContent = "أدخل كود الامتحان أولًا لإظهار بطاقة المعاينة، ثم انتقل إلى كتابة اسمك قبل بدء الاختبار.";
+  }
+
+  renderLinkedExamPreview();
+  updateStudentContinueButton();
+  renderStudentEntryStepper();
+}
+
+async function loadLinkedExamFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const linkedExamId = params.get("exam");
+
+  linkedExam = null;
+  isLinkedExamLoading = false;
+  updateHomeEntryMode();
+
+  if (!linkedExamId) {
+    return;
+  }
+
+  isLinkedExamLoading = true;
+  updateHomeEntryMode();
+
+  try {
+    const payload = await requestServerJson("/api/student/exam-access", {
+      method: "POST",
+      body: JSON.stringify({ examId: linkedExamId })
+    });
+
+    if (!payload?.exam) {
+      throw new Error("هذا الرابط غير صالح أو الامتحان غير متاح الآن.");
+    }
+
+    linkedExam = {
+      ...payload.exam,
+      questions: new Array(Number(payload.exam?.questionCount || 0))
+    };
+    hideErr("h-err");
+  } catch (error) {
+    linkedExam = null;
+    showErr(document.getElementById("h-err"), mapFirebaseError(error, "تعذر فتح رابط الامتحان المباشر."));
+  } finally {
+    isLinkedExamLoading = false;
+    updateHomeEntryMode();
+    goStudentEntryStep(1);
+
+    if (linkedExam) {
+      document.getElementById("h-continue-btn")?.focus();
+    }
+  }
+}
+
+async function continueStudentEntry() {
+  const rawCode = document.getElementById("h-code").value;
+  const code = rawCode.trim() ? sanitizeCode(rawCode) : "";
+  const err = document.getElementById("h-err");
+  const continueButton = document.getElementById("h-continue-btn");
+  const directExamId = new URLSearchParams(window.location.search).get("exam");
+
+  hideErr("h-err");
+
+  if (linkedExam) {
+    goStudentEntryStep(2);
+    return;
+  }
+
+  if (!code && !directExamId) {
+    showErr(err, "أدخل كود الامتحان أولًا للمتابعة.");
+    return;
+  }
+
+  isLinkedExamLoading = Boolean(directExamId);
+  updateStudentContinueButton();
+  setButtonLoading(continueButton, true, "جارٍ التحقق من الامتحان...");
+
+  try {
+    const accessPayload = await requestServerJson("/api/student/exam-access", {
+      method: "POST",
+      body: JSON.stringify(directExamId ? { examId: directExamId } : { code })
+    });
+
+    if (!accessPayload?.exam?.id) {
+      throw new Error("كود الامتحان غير صحيح أو الامتحان غير متاح الآن.");
+    }
+
+    linkedExam = {
+      ...accessPayload.exam,
+      questions: new Array(Number(accessPayload.exam.questionCount || 0))
+    };
+
+    if (!directExamId) {
+      document.getElementById("h-code").value = code;
+    }
+
+    updateHomeEntryMode();
+    document.getElementById("h-continue-btn")?.focus();
+  } catch (error) {
+    linkedExam = null;
+    updateHomeEntryMode();
+    showErr(err, mapFirebaseError(error, "تعذر التعرّف على الامتحان."));
+  } finally {
+    isLinkedExamLoading = false;
+    updateStudentContinueButton();
+    setButtonLoading(continueButton, false);
+  }
+}
+
+function resetStudentExamSelection() {
+  if (hasDirectExamLink()) {
+    return;
+  }
+
+  linkedExam = null;
+  isLinkedExamLoading = false;
+  updateHomeEntryMode();
+  goStudentEntryStep(1);
+  document.getElementById("h-code")?.focus();
 }
 
 function mapQuestionBankList(bankMap) {
@@ -2707,13 +3072,13 @@ async function homeEnter() {
   const err = document.getElementById("h-err");
   const actionButton = document.getElementById("h-enter-btn");
 
-  if (!name) {
-    showErr(err, "من فضلك أدخل اسم الطالب كاملًا.");
+  if (studentEntryStep !== 2) {
+    await continueStudentEntry();
     return;
   }
 
-  if (!group) {
-    showErr(err, "من فضلك أدخل الفصل أو المجموعة.");
+  if (!name) {
+    showErr(err, "من فضلك أدخل اسم الطالب كاملًا.");
     return;
   }
 
@@ -2749,7 +3114,7 @@ async function homeEnter() {
       method: "POST",
       body: JSON.stringify({
         studentName: name,
-        studentGroup: group
+        studentGroup: group || ""
       })
     });
 
@@ -2760,7 +3125,7 @@ async function homeEnter() {
       questions: normalizeQuestions(startPayload.exam?.questions)
     };
     currentStudent = startPayload.studentName || name;
-    currentStudentGroup = startPayload.studentGroup || group;
+    currentStudentGroup = startPayload.studentGroup || group || "";
     startExam();
     return;
   } catch (error) {
@@ -2786,7 +3151,7 @@ function startExam() {
   examTimeLeft = examTotalTime;
 
   document.getElementById("ex-title").textContent = currentExam.title;
-  document.getElementById("ex-student").textContent = `👤 ${currentStudent} • ${currentStudentGroup}`;
+  document.getElementById("ex-student").textContent = formatStudentHeaderLine(currentStudent, currentStudentGroup);
 
   closeWarnModal();
   document.getElementById("submit-modal").style.display = "none";
@@ -3138,7 +3503,10 @@ function showSubmissionReceipt() {
   document.getElementById("res-circle-subtitle").textContent = receiptStatus;
   document.getElementById("res-emoji").textContent = receiptPassed ? "🎉" : "📘";
   document.getElementById("res-name").textContent = currentSubmissionReceipt.studentName || currentStudent;
-  document.getElementById("res-exam-title").textContent = `${currentSubmissionReceipt.examTitle || currentExam.title} - ${currentSubmissionReceipt.studentGroup || currentStudentGroup}`;
+  document.getElementById("res-exam-title").textContent = formatExamPreviewTitle(
+    currentSubmissionReceipt.examTitle || currentExam.title,
+    currentSubmissionReceipt.studentGroup || currentStudentGroup
+  );
   document.getElementById("res-score").textContent = receiptScore;
   document.getElementById("res-wrong").textContent = receiptWrong;
   document.getElementById("res-total").textContent = receiptTotal;
@@ -3152,8 +3520,8 @@ function showSubmissionReceipt() {
     <div class="card" style="margin-bottom:14px;border-right:5px solid var(--gold)">
       <div style="font-weight:800;color:var(--gd);margin-bottom:8px">ملخص بيانات الطالب</div>
       <div style="color:var(--tm);font-size:14px;line-height:1.9">
-        الفصل / المجموعة: ${escapeHtml(currentSubmissionReceipt.studentGroup || currentStudentGroup)}
-        <br>
+        ${buildOptionalGroupMarkup(currentSubmissionReceipt.studentGroup || currentStudentGroup)}
+        ${hasStudentGroup(currentSubmissionReceipt.studentGroup || currentStudentGroup) ? "<br>" : ""}
         عدد الإجابات المرسلة: ${receiptAnswered} من ${receiptTotal}
         <br>
         وقت التسليم: ${formatDate(currentSubmissionReceipt.submittedAt)}
@@ -3190,8 +3558,7 @@ function printStudentReceipt() {
       <div style="font-size:20px;font-weight:800;margin-bottom:8px">${escapeHtml(currentSubmissionReceipt.studentName)}</div>
       <div style="color:#555;line-height:1.9">
         الامتحان: ${escapeHtml(currentSubmissionReceipt.examTitle)}
-        <br>
-        الفصل / المجموعة: ${escapeHtml(currentSubmissionReceipt.studentGroup)}
+        ${hasStudentGroup(currentSubmissionReceipt.studentGroup) ? `<br>الفصل / المجموعة: ${escapeHtml(currentSubmissionReceipt.studentGroup)}` : ""}
         <br>
         وقت التسليم: ${formatDate(currentSubmissionReceipt.submittedAt)}
         <br>
@@ -3236,7 +3603,7 @@ function renderPublishedResult(result) {
   document.getElementById("sr-pct").textContent = `${pct}%`;
   document.getElementById("sr-circle-subtitle").textContent = statusLabel;
   document.getElementById("sr-name").textContent = currentPublishedResult.studentName;
-  document.getElementById("sr-exam-title").textContent = `${currentPublishedResult.examTitle} - ${currentPublishedResult.studentGroup}`;
+  document.getElementById("sr-exam-title").textContent = formatExamPreviewTitle(currentPublishedResult.examTitle, currentPublishedResult.studentGroup);
   document.getElementById("sr-score").textContent = score;
   document.getElementById("sr-total").textContent = total;
   document.getElementById("sr-status").textContent = statusLabel;
@@ -3301,8 +3668,7 @@ function printPublishedResult() {
       <div style="font-size:20px;font-weight:800;margin-bottom:8px">${escapeHtml(currentPublishedResult.studentName)}</div>
       <div style="color:#555;line-height:1.9">
         الامتحان: ${escapeHtml(currentPublishedResult.examTitle)}
-        <br>
-        الفصل / المجموعة: ${escapeHtml(currentPublishedResult.studentGroup)}
+        ${hasStudentGroup(currentPublishedResult.studentGroup) ? `<br>الفصل / المجموعة: ${escapeHtml(currentPublishedResult.studentGroup)}` : ""}
         <br>
         كود الامتحان: ${escapeHtml(currentPublishedResult.examCode)}
         <br>
@@ -3408,6 +3774,11 @@ function goHome() {
   examTimeLeft = 0;
   examTotalTime = 0;
   cheatWarnings = 0;
+  studentEntryStep = 1;
+
+  if (!hasDirectExamLink()) {
+    linkedExam = null;
+  }
 
   document.getElementById("h-name").value = "";
   document.getElementById("h-group").value = "";
@@ -3415,17 +3786,13 @@ function goHome() {
   hideErr("h-err");
   hideErr("rl-err");
 
+  updateHomeEntryMode();
+  goStudentEntryStep(1);
   showPage("pg-home");
 }
 
 function registerDomEvents() {
   document.getElementById("h-name").addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      homeEnter();
-    }
-  });
-
-  document.getElementById("h-group").addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       homeEnter();
     }
@@ -3437,7 +3804,7 @@ function registerDomEvents() {
 
   document.getElementById("h-code").addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
-      homeEnter();
+      continueStudentEntry();
     }
   });
 
