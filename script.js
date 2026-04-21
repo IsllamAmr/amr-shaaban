@@ -3129,43 +3129,43 @@ function showSubmissionReceipt() {
   const receiptWrong = Math.max(0, receiptTotal - receiptScore);
   const receiptAnswered = Number(currentSubmissionReceipt.answeredCount || 0);
   const receiptPassed = receiptPct >= 50;
-  const receiptStatus = currentSubmissionReceipt.status || (receiptPassed ? "????" : "?? ????");
-  const receiptTrackingToken = currentSubmissionReceipt.trackingToken || currentSubmissionReceipt.submissionId || "??? ????";
+  const receiptStatus = currentSubmissionReceipt.status || (receiptPassed ? "ناجح" : "لم يجتز");
+  const receiptTrackingToken = currentSubmissionReceipt.trackingToken || currentSubmissionReceipt.submissionId || "غير متاح";
 
-  document.getElementById("res-heading").textContent = "?? ????? ????????";
+  document.getElementById("res-heading").textContent = "تم تسليم الامتحان";
   document.getElementById("res-circle").className = `score-circle ${receiptPassed ? "score-good" : "score-fail"}`;
   document.getElementById("res-pct").textContent = `${receiptPct}%`;
   document.getElementById("res-circle-subtitle").textContent = receiptStatus;
-  document.getElementById("res-emoji").textContent = receiptPassed ? "??" : "??";
+  document.getElementById("res-emoji").textContent = receiptPassed ? "🎉" : "📘";
   document.getElementById("res-name").textContent = currentSubmissionReceipt.studentName || currentStudent;
-  document.getElementById("res-exam-title").textContent = `${currentSubmissionReceipt.examTitle || currentExam.title} ? ${currentSubmissionReceipt.studentGroup || currentStudentGroup}`;
+  document.getElementById("res-exam-title").textContent = `${currentSubmissionReceipt.examTitle || currentExam.title} - ${currentSubmissionReceipt.studentGroup || currentStudentGroup}`;
   document.getElementById("res-score").textContent = receiptScore;
   document.getElementById("res-wrong").textContent = receiptWrong;
   document.getElementById("res-total").textContent = receiptTotal;
-  document.getElementById("res-score-label").textContent = "?????";
-  document.getElementById("res-wrong-label").textContent = "?????";
-  document.getElementById("res-total-label").textContent = "?????? ???????";
-  document.getElementById("res-msg").textContent = `?? ??????? ??? ??????? ?????. ${receiptStatus} ? ??? ????????: ${receiptTrackingToken}`;
+  document.getElementById("res-score-label").textContent = "الدرجة";
+  document.getElementById("res-wrong-label").textContent = "الأخطاء";
+  document.getElementById("res-total-label").textContent = "إجمالي الأسئلة";
+  document.getElementById("res-msg").textContent = `تم تسجيل نتيجة الطالب بنجاح. الحالة: ${receiptStatus} - رقم المتابعة: ${receiptTrackingToken}`;
   document.getElementById("res-msg").style.overflowWrap = "anywhere";
-  document.getElementById("res-review-title").textContent = "?????? ???????";
+  document.getElementById("res-review-title").textContent = "تفاصيل التسليم";
   document.getElementById("res-review").innerHTML = `
     <div class="card" style="margin-bottom:14px;border-right:5px solid var(--gold)">
-      <div style="font-weight:800;color:var(--gd);margin-bottom:8px">? ?? ??????? ???????? ?????</div>
+      <div style="font-weight:800;color:var(--gd);margin-bottom:8px">ملخص بيانات الطالب</div>
       <div style="color:var(--tm);font-size:14px;line-height:1.9">
-        ????? / ????????: ${escapeHtml(currentSubmissionReceipt.studentGroup || currentStudentGroup)}
+        الفصل / المجموعة: ${escapeHtml(currentSubmissionReceipt.studentGroup || currentStudentGroup)}
         <br>
-        ??? ??????? ??????? ????: ${receiptAnswered} ?? ${receiptTotal}
+        عدد الإجابات المرسلة: ${receiptAnswered} من ${receiptTotal}
         <br>
-        ??? ???????: ${formatDate(currentSubmissionReceipt.submittedAt)}
+        وقت التسليم: ${formatDate(currentSubmissionReceipt.submittedAt)}
         <br>
-        ??? ????????:
+        رقم المتابعة:
         <span style="overflow-wrap:anywhere;word-break:break-word">${escapeHtml(receiptTrackingToken)}</span>
       </div>
     </div>
     <div class="card" style="margin-bottom:14px;border-right:5px solid var(--gm)">
-      <div style="font-weight:800;color:var(--gd);margin-bottom:8px">?? ?????</div>
+      <div style="font-weight:800;color:var(--gd);margin-bottom:8px">مهم</div>
       <div style="color:var(--tm);font-size:14px;line-height:1.9">
-        ?? ???? ??????? ??? ???????? ??? ??? ??? ???????? ?? ?????? ???? ??????.
+        هذه النسخة تعرض نتيجة الطالب فقط، ولا تكشف الإجابات أو مفاتيح التصحيح.
       </div>
     </div>
   `;
@@ -3182,28 +3182,28 @@ function printStudentReceipt() {
   const receiptScore = Number(currentSubmissionReceipt.score || 0);
   const receiptWrong = Math.max(0, receiptTotal - receiptScore);
   const receiptPct = Number(currentSubmissionReceipt.pct || 0);
-  const receiptStatus = currentSubmissionReceipt.status || (receiptPct >= 50 ? "????" : "?? ????");
-  const receiptTrackingToken = currentSubmissionReceipt.trackingToken || currentSubmissionReceipt.submissionId || "??? ????";
+  const receiptStatus = currentSubmissionReceipt.status || (receiptPct >= 50 ? "ناجح" : "لم يجتز");
+  const receiptTrackingToken = currentSubmissionReceipt.trackingToken || currentSubmissionReceipt.submissionId || "غير متاح";
 
-  openPrintWindow("????? ????? ????????", `
+  openPrintWindow("إيصال تسليم الامتحان", `
     <div class="print-card">
       <div style="font-size:20px;font-weight:800;margin-bottom:8px">${escapeHtml(currentSubmissionReceipt.studentName)}</div>
       <div style="color:#555;line-height:1.9">
-        ????????: ${escapeHtml(currentSubmissionReceipt.examTitle)}
+        الامتحان: ${escapeHtml(currentSubmissionReceipt.examTitle)}
         <br>
-        ????? / ????????: ${escapeHtml(currentSubmissionReceipt.studentGroup)}
+        الفصل / المجموعة: ${escapeHtml(currentSubmissionReceipt.studentGroup)}
         <br>
-        ??? ???????: ${formatDate(currentSubmissionReceipt.submittedAt)}
+        وقت التسليم: ${formatDate(currentSubmissionReceipt.submittedAt)}
         <br>
-        ??? ????????: <span style="overflow-wrap:anywhere;word-break:break-word">${escapeHtml(receiptTrackingToken)}</span>
+        رقم المتابعة: <span style="overflow-wrap:anywhere;word-break:break-word">${escapeHtml(receiptTrackingToken)}</span>
       </div>
       <div class="print-grid">
-        <div class="print-stat"><strong>${receiptScore}</strong><span>??????</span></div>
-        <div class="print-stat"><strong>${receiptWrong}</strong><span>?????</span></div>
+        <div class="print-stat"><strong>${receiptScore}</strong><span>الدرجة</span></div>
+        <div class="print-stat"><strong>${receiptWrong}</strong><span>الأخطاء</span></div>
         <div class="print-stat"><strong>${receiptPct}%</strong><span>${escapeHtml(receiptStatus)}</span></div>
       </div>
       <div style="color:#666;line-height:1.9">
-        ?? ??????? ??? ???????? ??? ??? ??? ???????? ?? ?????? ???? ?? ??? ???????.
+        هذه النسخة تعرض نتيجة الطالب فقط، ولا تكشف الإجابات أو مفاتيح التصحيح.
       </div>
     </div>
   `);
@@ -3231,21 +3231,21 @@ function renderPublishedResult(result) {
   };
 
   document.getElementById("sr-emoji").textContent = statusView.emoji;
-  document.getElementById("sr-heading").textContent = "????? ??????";
+  document.getElementById("sr-heading").textContent = "نتيجة الطالب";
   document.getElementById("sr-circle").className = `score-circle ${pct >= 50 ? "score-good" : "score-fail"}`;
   document.getElementById("sr-pct").textContent = `${pct}%`;
   document.getElementById("sr-circle-subtitle").textContent = statusLabel;
   document.getElementById("sr-name").textContent = currentPublishedResult.studentName;
-  document.getElementById("sr-exam-title").textContent = `${currentPublishedResult.examTitle} ? ${currentPublishedResult.studentGroup}`;
+  document.getElementById("sr-exam-title").textContent = `${currentPublishedResult.examTitle} - ${currentPublishedResult.studentGroup}`;
   document.getElementById("sr-score").textContent = score;
   document.getElementById("sr-total").textContent = total;
   document.getElementById("sr-status").textContent = statusLabel;
 
   const publishedLabel = currentPublishedResult.publishedAt
-    ? `?? ??? ??? ??????? ?? ${formatDate(currentPublishedResult.publishedAt)}.`
-    : "?? ?????? ??? ??????? ?????? ??????.";
+    ? `تم نشر هذه النتيجة في ${formatDate(currentPublishedResult.publishedAt)}.`
+    : "تم اعتماد هذه النتيجة بواسطة المدرس.";
   const submittedLabel = currentPublishedResult.submittedAt
-    ? `??? ???????: ${formatDate(currentPublishedResult.submittedAt)}.`
+    ? `وقت التسليم: ${formatDate(currentPublishedResult.submittedAt)}.`
     : "";
 
   document.getElementById("sr-msg").textContent = `${publishedLabel} ${submittedLabel}`.trim();
@@ -3292,30 +3292,30 @@ async function lookupPublishedResult() {
 
 function printPublishedResult() {
   if (!currentPublishedResult) {
-    alert("???? ??????? ????? ?? ??????.");
+    alert("افتح النتيجة أولًا ثم اطبعها.");
     return;
   }
 
-  openPrintWindow(`????? ${currentPublishedResult.studentName}`, `
+  openPrintWindow(`نتيجة ${currentPublishedResult.studentName}`, `
     <div class="print-card">
       <div style="font-size:20px;font-weight:800;margin-bottom:8px">${escapeHtml(currentPublishedResult.studentName)}</div>
       <div style="color:#555;line-height:1.9">
-        ????????: ${escapeHtml(currentPublishedResult.examTitle)}
+        الامتحان: ${escapeHtml(currentPublishedResult.examTitle)}
         <br>
-        ????? / ????????: ${escapeHtml(currentPublishedResult.studentGroup)}
+        الفصل / المجموعة: ${escapeHtml(currentPublishedResult.studentGroup)}
         <br>
-        ??? ????????: ${escapeHtml(currentPublishedResult.examCode)}
+        كود الامتحان: ${escapeHtml(currentPublishedResult.examCode)}
         <br>
-        ${currentPublishedResult.submittedAt ? `??? ???????: ${formatDate(currentPublishedResult.submittedAt)}` : ""}
-        ${currentPublishedResult.publishedAt ? `<br>??? ?????: ${formatDate(currentPublishedResult.publishedAt)}` : ""}
+        ${currentPublishedResult.submittedAt ? `وقت التسليم: ${formatDate(currentPublishedResult.submittedAt)}` : ""}
+        ${currentPublishedResult.publishedAt ? `<br>وقت النشر: ${formatDate(currentPublishedResult.publishedAt)}` : ""}
       </div>
       <div class="print-grid">
-        <div class="print-stat"><strong>${currentPublishedResult.score}</strong><span>??????</span></div>
-        <div class="print-stat"><strong>${currentPublishedResult.total}</strong><span>?????? ???????</span></div>
+        <div class="print-stat"><strong>${currentPublishedResult.score}</strong><span>الدرجة</span></div>
+        <div class="print-stat"><strong>${currentPublishedResult.total}</strong><span>إجمالي الأسئلة</span></div>
         <div class="print-stat"><strong>${currentPublishedResult.pct}%</strong><span>${escapeHtml(currentPublishedResult.status)}</span></div>
       </div>
       <div style="color:#666;line-height:1.9">
-        ??? ???? ????? ???? ??????? ???? ??? ????? ?? ?????? ?? ?????? ?????.
+        هذه نسخة مخصصة لعرض النتيجة فقط، ولا تتضمن أي إجابات أو مفاتيح تصحيح.
       </div>
     </div>
   `);
