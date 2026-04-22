@@ -1,10 +1,14 @@
-const http = require('http');
+const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const admin = require('firebase-admin');
+const helmet = require('helmet');
+const { rateLimit } = require('express-rate-limit');
+const hpp = require('hpp');
 
 const ROOT_DIR = __dirname;
+const PUBLIC_DIR = path.join(ROOT_DIR, 'public');
 const HTML_FILE = 'index.html';
 const STYLE_FILE = 'style.css';
 const SCRIPT_FILE = 'script.js';
@@ -13,6 +17,8 @@ const SESSION_COOKIE = '__session';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 12;
 const ATTEMPT_TOKEN_TTL_MS = 1000 * 60 * 60 * 8;
 const RESULT_TOKEN_TTL_MS = 1000 * 60 * 60 * 24 * 180;
+const STUDENT_ATTEMPT_TOKEN_GRACE_MS = 10 * 60 * 1000;
+const STUDENT_SUBMIT_GRACE_MS = 3 * 60 * 1000;
 const MAX_JSON_BODY_SIZE = 10 * 1024 * 1024;
 const MAX_ATTACHMENT_SIZE = 2 * 1024 * 1024;
 const DIFFICULTY_LEVELS = new Set(['easy', 'medium', 'hard', 'impossible']);
@@ -51,7 +57,11 @@ loadEnvFile(path.join(ROOT_DIR, '.env'));
 
 const HOST = process.env.HOST || '0.0.0.0';
 const PORT = Number(process.env.PORT || 3000);
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Amr@2024';
+const LEGACY_ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD || '').trim();
+const ADMIN_USERNAME = String(process.env.ADMIN_USERNAME || '').trim();
+const ADMIN_DISPLAY_NAME = String(process.env.ADMIN_DISPLAY_NAME || '').trim();
+const ADMIN_PASSWORD_HASH = String(process.env.ADMIN_PASSWORD_HASH || '').trim();
+const ADMIN_USERS_JSON = String(process.env.ADMIN_USERS_JSON || '').trim();
 const FIREBASE_DATABASE_URL = process.env.FIREBASE_DATABASE_URL;
 const FIREBASE_SERVICE_ACCOUNT_PATH = process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
 const FIREBASE_ROOT = (process.env.FIREBASE_ROOT || 'examPlatform').replace(/^\/+|\/+$/g, '');
@@ -65,11 +75,21 @@ const ALLOWED_ORIGINS = new Set(
     .map((origin) => normalizeOrigin(origin))
     .filter(Boolean)
 );
-const SESSION_SECRET = process.env.SESSION_SECRET
-  || crypto.createHash('sha256').update(`${ADMIN_PASSWORD}|${FIREBASE_DATABASE_URL || 'local'}`).digest('hex');
+const SESSION_SECRET = String(process.env.SESSION_SECRET || '').trim();
+const ADMIN_ACCOUNTS = loadAdminAccountsConfig();
+const ADMIN_ACCOUNT_MAP = new Map(ADMIN_ACCOUNTS.map((account) => [account.username, account]));
 
 let database;
 let storageBucket;
+
+try {
+  validateServerConfiguration();
+  warnAboutLegacyConfiguration();
+} catch (error) {
+  console.error('Server configuration failed.');
+  console.error(error.message);
+  process.exit(1);
+}
 
 try {
   ({ database, storageBucket } = initializeFirebaseServices());
@@ -105,6 +125,151 @@ function loadEnvFile(filePath) {
       process.env[key] = value;
     }
   }
+}
+
+function loadAdminAccountsConfig() {
+  const configuredAccounts = [];
+
+  if (ADMIN_USERS_JSON) {
+    let parsedAccounts;
+    try {
+      parsedAccounts = JSON.parse(ADMIN_USERS_JSON);
+    } catch (error) {
+      throw new Error('ADMIN_USERS_JSON must be valid JSON.');
+    }
+
+    const accountList = Array.isArray(parsedAccounts) ? parsedAccounts : [parsedAccounts];
+    configuredAccounts.push(...accountList);
+  }
+
+  if (ADMIN_USERNAME || ADMIN_PASSWORD_HASH || ADMIN_DISPLAY_NAME) {
+    configuredAccounts.push({
+      username: ADMIN_USERNAME,
+      displayName: ADMIN_DISPLAY_NAME,
+      passwordHash: ADMIN_PASSWORD_HASH
+    });
+  }
+
+  return configuredAccounts.map((account, index) => normalizeAdminAccount(account, index));
+}
+
+function normalizeAdminUsername(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function normalizeAdminAccount(account, index) {
+  const username = normalizeAdminUsername(account?.username || account?.email || account?.user);
+  const displayName = String(account?.displayName || account?.name || username).trim();
+  const passwordHash = String(account?.passwordHash || '').trim();
+
+  if (!username) {
+    throw new Error(`Admin account #${index + 1} is missing a username.`);
+  }
+
+  if (!/^[\p{L}\p{N}._@-]{3,64}$/u.test(username)) {
+    throw new Error(`Admin username "${username}" contains unsupported characters.`);
+  }
+
+  if (!passwordHash) {
+    throw new Error(`Admin account "${username}" is missing passwordHash.`);
+  }
+
+  if (!isSupportedPasswordHash(passwordHash)) {
+    throw new Error(`Admin account "${username}" has an unsupported password hash format.`);
+  }
+
+  return {
+    username,
+    displayName: displayName || username,
+    passwordHash
+  };
+}
+
+function validateServerConfiguration() {
+  const issues = [];
+
+  if (!SESSION_SECRET || SESSION_SECRET.length < 32 || /^change-this-secret$/i.test(SESSION_SECRET)) {
+    issues.push('SESSION_SECRET must be explicitly configured to a strong random value with at least 32 characters.');
+  }
+
+  if (!ADMIN_ACCOUNTS.length) {
+    issues.push('Configure at least one admin account using ADMIN_USERNAME + ADMIN_PASSWORD_HASH, or ADMIN_USERS_JSON.');
+  }
+
+  const duplicateUsernames = new Set();
+  for (const account of ADMIN_ACCOUNTS) {
+    if (duplicateUsernames.has(account.username)) {
+      issues.push(`Admin username "${account.username}" is duplicated.`);
+      continue;
+    }
+    duplicateUsernames.add(account.username);
+  }
+
+  if (!ADMIN_ACCOUNTS.length && LEGACY_ADMIN_PASSWORD) {
+    issues.push('ADMIN_PASSWORD is no longer accepted. Migrate to ADMIN_USERNAME + ADMIN_PASSWORD_HASH.');
+  }
+
+  if (issues.length) {
+    throw new Error(issues.map((issue) => `- ${issue}`).join('\n'));
+  }
+}
+
+function warnAboutLegacyConfiguration() {
+  if (LEGACY_ADMIN_PASSWORD) {
+    console.warn('Legacy ADMIN_PASSWORD is present in .env but ignored. Remove it after confirming the new admin account login works.');
+  }
+}
+
+function isSupportedPasswordHash(passwordHash) {
+  return /^scrypt\$\d+\$\d+\$\d+\$[A-Za-z0-9_-]+\$[A-Za-z0-9_-]+$/.test(passwordHash);
+}
+
+function timingSafeStringEqual(left, right) {
+  const leftBuffer = Buffer.from(String(left || ''), 'utf8');
+  const rightBuffer = Buffer.from(String(right || ''), 'utf8');
+
+  if (leftBuffer.length !== rightBuffer.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function verifyPasswordHash(input, passwordHash) {
+  if (!isSupportedPasswordHash(passwordHash)) {
+    return false;
+  }
+
+  const [algorithm, nValue, rValue, pValue, saltValue, expectedKeyValue] = passwordHash.split('$');
+
+  if (algorithm !== 'scrypt') {
+    return false;
+  }
+
+  const options = {
+    N: Number(nValue),
+    r: Number(rValue),
+    p: Number(pValue),
+    maxmem: 128 * 1024 * 1024
+  };
+
+  if (!Number.isFinite(options.N) || !Number.isFinite(options.r) || !Number.isFinite(options.p)) {
+    return false;
+  }
+
+  const saltBuffer = Buffer.from(saltValue, 'base64url');
+  const expectedKeyBuffer = Buffer.from(expectedKeyValue, 'base64url');
+  const derivedKeyBuffer = crypto.scryptSync(String(input || ''), saltBuffer, expectedKeyBuffer.length, options);
+
+  if (derivedKeyBuffer.length !== expectedKeyBuffer.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(derivedKeyBuffer, expectedKeyBuffer);
+}
+
+function getAdminAccount(username) {
+  return ADMIN_ACCOUNT_MAP.get(normalizeAdminUsername(username)) || null;
 }
 
 function resolveStorageBucketName(serviceAccount) {
@@ -205,7 +370,7 @@ function summarizeQuestionBankPayload(body = {}) {
 }
 
 function logQuestionBankOp(event, payload = {}) {
-  console.log(`[question-bank] ${new Date().toISOString()} ${event} ${JSON.stringify(payload)}`);
+  logAudit('QuestionBank', event, payload);
 }
 
 function normalizeOrigin(origin) {
@@ -264,16 +429,18 @@ function createSessionSignature(payload) {
   return crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('base64url');
 }
 
-function createSignedSessionCookieValue() {
+function createSignedSessionCookieValue(user) {
   const payload = Buffer.from(JSON.stringify({
-    role: 'admin',
+    role: user.role, // 'admin', 'teacher', or 'student'
+    uid: user.username || user.uid,
+    name: user.displayName || user.name,
     exp: Date.now() + SESSION_TTL_MS
   })).toString('base64url');
   const signature = createSessionSignature(payload);
   return `${payload}.${signature}`;
 }
 
-function readAdminSessionFromRequest(request) {
+function readSessionFromRequest(request) {
   const cookies = parseCookies(request);
   const rawCookie = cookies[SESSION_COOKIE];
 
@@ -289,14 +456,19 @@ function readAdminSessionFromRequest(request) {
 
   const expectedSignature = createSessionSignature(payload);
 
-  if (signature !== expectedSignature) {
+  if (!timingSafeStringEqual(signature, expectedSignature)) {
     return null;
   }
 
   try {
     const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
 
-    if (parsed.role !== 'admin' || typeof parsed.exp !== 'number' || parsed.exp <= Date.now()) {
+    if (
+      !['admin', 'teacher', 'student'].includes(parsed.role)
+      || typeof parsed.uid !== 'string'
+      || typeof parsed.exp !== 'number'
+      || parsed.exp <= Date.now()
+    ) {
       return null;
     }
 
@@ -306,15 +478,86 @@ function readAdminSessionFromRequest(request) {
   }
 }
 
-function requireAdmin(request) {
-  const adminSession = readAdminSessionFromRequest(request);
+function requireAuth(request) {
+  const session = readSessionFromRequest(request);
+  if (!session) {
+    throw createHttpError(401, 'يجب تسجيل الدخول أولاً.');
+  }
+  return session;
+}
 
-  if (!adminSession) {
+function requireRole(role) {
+  return (request, response, next) => {
+    try {
+      const session = requireAuth(request);
+      // super_admin has access to everything
+      if (session.role === 'super_admin') {
+        request.session = session;
+        return next();
+      }
+      if (session.role !== role) {
+        throw createHttpError(403, 'غير مسموح لك بالوصول لهذا الجزء.');
+      }
+      request.session = session;
+      next();
+    } catch (err) {
+      next(err);
+    }
+  };
+}
+
+function requireSuperAdmin(request) {
+  const session = readSessionFromRequest(request);
+  if (!session || session.role !== 'super_admin') {
+    throw createHttpError(403, 'هذه الصلاحية متاحة للمسؤول العام فقط.');
+  }
+  return session;
+}
+
+function requireAdmin(request) {
+  const session = readSessionFromRequest(request);
+  // super_admin is also an admin
+  if (!session || !['super_admin', 'admin'].includes(session.role)) {
+    throw createHttpError(401, 'دخول المسؤول مطلوب.');
+  }
+  return session;
+}
+
+async function getUserPermissions(uid) {
+  const snapshot = await database.ref(firebasePath('users', uid, 'permissions')).get();
+  return snapshot.exists() ? snapshot.val() : {};
+}
+
+async function requireTeacher(request, permission = null) {
+  const session = readSessionFromRequest(request);
+  
+  if (!session || !['super_admin', 'admin', 'teacher'].includes(session.role)) {
     throw createHttpError(401, 'دخول المدرس مطلوب.');
   }
 
-  return adminSession;
+  // Super Admin and Admin bypass permission checks
+  if (['super_admin', 'admin'].includes(session.role)) {
+    return session;
+  }
+
+  if (permission) {
+    const perms = await getUserPermissions(session.uid);
+    if (perms[permission] === false) {
+      throw createHttpError(403, 'ليس لديك صلاحية لهذه العملية. يرجى مراجعة المسؤول.');
+    }
+  }
+
+  return session;
 }
+
+function requireStudent(request) {
+  const session = readSessionFromRequest(request);
+  if (!session || session.role !== 'student') {
+    throw createHttpError(401, 'دخول الطالب مطلوب.');
+  }
+  return session;
+}
+
 
 function getRequestProtocol(request) {
   const forwardedProto = String(request.headers['x-forwarded-proto'] || '')
@@ -409,17 +652,6 @@ function clearSessionCookie(request) {
   const cookiePolicy = getSessionCookiePolicy(request);
   const securePart = cookiePolicy.secure ? '; Secure' : '';
   return `${SESSION_COOKIE}=; HttpOnly; SameSite=${cookiePolicy.sameSite}; Path=/; Max-Age=0${securePart}`;
-}
-
-function passwordMatches(input, expected) {
-  const inputBuffer = Buffer.from(String(input || ''), 'utf8');
-  const expectedBuffer = Buffer.from(String(expected), 'utf8');
-
-  if (inputBuffer.length !== expectedBuffer.length) {
-    return false;
-  }
-
-  return crypto.timingSafeEqual(inputBuffer, expectedBuffer);
 }
 
 function firebasePath(...segments) {
@@ -1106,8 +1338,10 @@ function buildAdminDashboardPayload(examsMap, keysMap, submissionsMap) {
     const results = buildSubmissionList(submissionsMap?.[id], correctAnswers, questions.length);
 
     results.forEach((result) => {
+      // Strip 'answers' array from dashboard payload — not needed for charts, saves bandwidth
+      const { answers: _omitted, ...resultWithoutAnswers } = result;
       allResults.push({
-        ...result,
+        ...resultWithoutAnswers,
         examId: id,
         examTitle: String(exam.title || '')
       });
@@ -1245,6 +1479,7 @@ async function deleteAdminExam(examId) {
     [firebasePath('examsPublic', examId)]: null,
     [firebasePath('examKeys', examId)]: null,
     [firebasePath('submissions', examId)]: null,
+    [firebasePath('studentAttempts', examId)]: null,
     [firebasePath('examCodeRegistry', exam.code)]: null,
     [firebasePath('publicExamCodes', exam.code)]: null,
     [firebasePath('publishedResults', exam.code)]: null
@@ -1641,30 +1876,31 @@ async function importQuestionBankQuestions(bankId, body = {}, debugMeta = {}) {
   };
 }
 
-function normalizeStudentIdentityPart(value) {
-  return String(value || '')
-    .normalize('NFKC')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toLowerCase();
-}
-
-function buildStudentKey(studentName, studentGroup) {
-  return crypto
-    .createHash('sha256')
-    .update(`${normalizeStudentIdentityPart(studentName)}|${normalizeStudentIdentityPart(studentGroup)}`)
-    .digest('hex');
-}
-
 function sanitizeStudentIdentity(body = {}) {
   const studentName = sanitizeText(body.studentName ?? body.name, 'اسم الطالب', 120);
   const studentGroup = sanitizeOptionalText(body.studentGroup ?? body.group, 'الفصل / المجموعة', 120);
 
   return {
     studentName,
-    studentGroup,
-    studentKey: buildStudentKey(studentName, studentGroup)
+    studentGroup
   };
+}
+
+function normalizeStudentIdentityPart(value) {
+  return String(value || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+}
+
+function buildStudentIdentityKey(examId, identity) {
+  const normalizedName = normalizeStudentIdentityPart(identity?.studentName);
+  const normalizedGroup = normalizeStudentIdentityPart(identity?.studentGroup);
+
+  return crypto
+    .createHash('sha256')
+    .update(`${examId}|${normalizedName}|${normalizedGroup}`)
+    .digest('hex');
 }
 
 function createSignedStudentToken(payload) {
@@ -1686,7 +1922,7 @@ function readSignedStudentToken(token) {
 
   const expectedSignature = createSessionSignature(encodedPayload);
 
-  if (signature !== expectedSignature) {
+  if (!timingSafeStringEqual(signature, expectedSignature)) {
     return null;
   }
 
@@ -1703,40 +1939,52 @@ function readSignedStudentToken(token) {
   }
 }
 
-function createStudentAttemptToken(examId, studentKey) {
+function createStudentAttemptToken(attemptRecord) {
+  const startedAt = Number(attemptRecord?.startedAt) || Date.now();
+  const durationMs = (Number(attemptRecord?.durationMinutes) || 30) * 60 * 1000;
+  const exp = startedAt + durationMs + STUDENT_ATTEMPT_TOKEN_GRACE_MS;
+
   return createSignedStudentToken({
     type: 'student_attempt',
-    examId,
-    studentKey,
+    examId: attemptRecord.examId,
+    attemptId: attemptRecord.id,
+    identityKey: attemptRecord.identityKey,
+    startedAt,
     iat: Date.now(),
-    exp: Date.now() + ATTEMPT_TOKEN_TTL_MS
+    exp
   });
 }
 
-function createStudentReceiptToken(examId, submissionId, studentKey) {
+function createStudentReceiptToken(examId, submissionId, attemptId) {
   return createSignedStudentToken({
     type: 'student_receipt',
     examId,
     submissionId,
-    studentKey,
+    attemptId,
     exp: Date.now() + ATTEMPT_TOKEN_TTL_MS
   });
 }
 
-function createStudentResultToken(examId, submissionId, studentKey) {
+function createStudentResultToken(examId, submissionId, attemptId) {
   return createSignedStudentToken({
     type: 'student_result',
     examId,
     submissionId,
-    studentKey,
+    attemptId,
     exp: Date.now() + RESULT_TOKEN_TTL_MS
   });
 }
 
-function requireValidStudentAttemptToken(token, examId, studentKey) {
+function requireValidStudentAttemptToken(token, examId) {
   const payload = readSignedStudentToken(token);
 
-  if (!payload || payload.type !== 'student_attempt' || payload.examId !== examId || payload.studentKey !== studentKey) {
+  if (
+    !payload
+    || payload.type !== 'student_attempt'
+    || payload.examId !== examId
+    || !payload.attemptId
+    || !payload.identityKey
+  ) {
     throw createHttpError(401, 'جلسة الامتحان غير صالحة. أعد فتح الامتحان ثم حاول مرة أخرى.');
   }
 
@@ -1756,7 +2004,7 @@ function requireValidStudentReceiptToken(token, examId, submissionId) {
 function requireValidStudentResultToken(token) {
   const payload = readSignedStudentToken(token);
 
-  if (!payload || payload.type !== 'student_result' || !payload.examId || !payload.submissionId || !payload.studentKey) {
+  if (!payload || payload.type !== 'student_result' || !payload.examId || !payload.submissionId || !payload.attemptId) {
     throw createHttpError(401, 'بيانات متابعة النتيجة غير صحيحة.');
   }
 
@@ -1856,25 +2104,17 @@ function sanitizeCurrentExamForStudent(examId, exam) {
   };
 }
 
-async function readExistingSubmissionByStudentKey(examId, studentKey) {
-  const submissionsSnapshot = await database.ref(firebasePath('submissions', examId)).get();
+async function readExistingSubmissionByAttemptId(examId, attemptId) {
+  const submissionSnapshot = await database.ref(firebasePath('submissions', examId, attemptId)).get();
 
-  if (!submissionsSnapshot.exists()) {
+  if (!submissionSnapshot.exists()) {
     return null;
   }
 
-  const submissions = submissionsSnapshot.val();
-
-  for (const [submissionId, submission] of Object.entries(submissions)) {
-    if (submission && submission.studentKey === studentKey) {
-      return {
-        id: submissionId,
-        ...submission
-      };
-    }
-  }
-
-  return null;
+  return {
+    id: attemptId,
+    ...submissionSnapshot.val()
+  };
 }
 
 function buildStudentReceipt(exam, submission, options = {}) {
@@ -1897,32 +2137,174 @@ function buildStudentReceipt(exam, submission, options = {}) {
   };
 }
 
-async function startStudentExam(examId, body = {}) {
+async function startStudentExam(examId, body = {}, request = null) {
   const exam = await getActiveExamById(examId);
-  const identity = sanitizeStudentIdentity(body);
-  const existingSubmission = await readExistingSubmissionByStudentKey(exam.id, identity.studentKey);
+  const session = request ? readSessionFromRequest(request) : null;
+  
+  // Prioritize session identity if available
+  const studentName = session?.name || body.studentName || body.name;
+  const studentGroup = body.studentGroup || body.group || "";
+  
+  const identity = { studentName, studentGroup };
+  const identityKey = session?.uid || buildStudentIdentityKey(exam.id, identity);
+  
+  const attemptRef = database.ref(firebasePath('studentAttempts', exam.id, identityKey));
+  const initialSnapshot = await attemptRef.get();
+  let attemptRecord = initialSnapshot.exists()
+    ? { ...initialSnapshot.val(), examId: exam.id, identityKey }
+    : null;
+  let resumed = initialSnapshot.exists();
 
-  if (existingSubmission) {
-    throw createHttpError(409, 'تم تسليم هذا الامتحان بالفعل بنفس الاسم والمجموعة.');
+  if (!attemptRecord?.id || !attemptRecord?.startedAt) {
+    const startedAt = Date.now();
+    const initialAttemptRecord = {
+      id: createId('atm'),
+      examId: exam.id,
+      identityKey,
+      studentName: identity.studentName,
+      studentGroup: identity.studentGroup,
+      durationMinutes: Number.parseInt(exam.duration, 10) || 30,
+      startedAt,
+      createdAt: startedAt,
+      lastSeenAt: startedAt,
+      status: 'active'
+    };
+    const transactionResult = await attemptRef.transaction((current) => {
+      if (current && typeof current === 'object' && current.id && current.startedAt) {
+        return current;
+      }
+
+      return initialAttemptRecord;
+    });
+    attemptRecord = {
+      ...transactionResult.snapshot.val(),
+      examId: exam.id,
+      identityKey
+    };
+    resumed = attemptRecord.id !== initialAttemptRecord.id;
   }
 
+  const existingSubmission = await readExistingSubmissionByAttemptId(exam.id, attemptRecord.id);
+
+  if (existingSubmission) {
+    await attemptRef.update({
+      status: 'submitted',
+      submittedAt: Number(existingSubmission.submittedAt) || Date.now(),
+      submissionId: existingSubmission.id,
+      lastSeenAt: Date.now()
+    });
+    throw createHttpError(409, 'تم تسليم هذا الامتحان بالفعل لهذا الطالب، ولا يمكن بدء محاولة جديدة.');
+  }
+
+  const durationMs = (Number(attemptRecord.durationMinutes) || 30) * 60 * 1000;
+  const elapsedMs = Date.now() - Number(attemptRecord.startedAt || 0);
+
+  if (elapsedMs > (durationMs + STUDENT_SUBMIT_GRACE_MS)) {
+    await attemptRef.update({
+      status: 'expired',
+      expiredAt: Date.now(),
+      lastSeenAt: Date.now()
+    });
+    throw createHttpError(408, 'بدأت هذه المحاولة بالفعل وانتهى وقتها، ولا يمكن منح وقت جديد لنفس الطالب.');
+  }
+
+  await attemptRef.update({
+    status: 'active',
+    lastSeenAt: Date.now()
+  });
+
+  const remainingSeconds = Math.max(0, Math.ceil((durationMs - elapsedMs) / 1000));
+
   return {
-    studentName: identity.studentName,
-    studentGroup: identity.studentGroup,
-    exam: sanitizeCurrentExamForStudent(exam.id, exam),
-    attemptToken: createStudentAttemptToken(exam.id, identity.studentKey)
+    studentName: String(attemptRecord.studentName || identity.studentName),
+    studentGroup: String(attemptRecord.studentGroup || identity.studentGroup),
+    exam: sanitizeCurrentExamForStudent(exam.id, {
+      ...exam,
+      duration: Number(attemptRecord.durationMinutes) || Number.parseInt(exam.duration, 10) || 30
+    }),
+    attemptId: attemptRecord.id,
+    attemptToken: createStudentAttemptToken(attemptRecord),
+    remainingSeconds,
+    resumed
   };
 }
 
-async function submitStudentExam(examId, body = {}) {
-  const exam = await getActiveExamById(examId);
-  const identity = sanitizeStudentIdentity(body);
-  requireValidStudentAttemptToken(body.attemptToken, exam.id, identity.studentKey);
+function assertExamWithinAllowedTime(attemptRecord) {
+  if (!attemptRecord || !attemptRecord.startedAt) {
+    throw createHttpError(403, 'جلسة الامتحان تفتقر إلى وقت البدء. يرجى إعادة بدء الامتحان.');
+  }
 
-  const existingSubmission = await readExistingSubmissionByStudentKey(exam.id, identity.studentKey);
+  const durationMs = (Number(attemptRecord.durationMinutes) || 0) * 60 * 1000;
+  const elapsedMs = Date.now() - Number(attemptRecord.startedAt || 0);
+
+  if (elapsedMs > (durationMs + STUDENT_SUBMIT_GRACE_MS)) {
+    throw createHttpError(408, 'انتهى وقت المسموح للامتحان ولم يتم التسليم المباشر. عذراً، لا يمكن قبول إجاباتك الآن.');
+  }
+}
+
+async function submitStudentExam(examId, body = {}, request = null) {
+  const exam = await getExamRecordById(examId);
+  const session = request ? readSessionFromRequest(request) : null;
+  
+  // Resolve identity consistently with startStudentExam
+  const studentName = session?.name || body.studentName || body.name;
+  const studentGroup = body.studentGroup || body.group || "";
+  const identity = { studentName, studentGroup };
+  const identityKey = session?.uid || buildStudentIdentityKey(exam.id, identity);
+  
+  const attemptPayload = requireValidStudentAttemptToken(body.attemptToken, exam.id);
+  const attemptRef = database.ref(firebasePath('studentAttempts', exam.id, identityKey));
+  const attemptSnapshot = await attemptRef.get();
+
+  if (attemptPayload.identityKey !== identityKey) {
+    throw createHttpError(403, 'بيانات الطالب لا تطابق المحاولة النشطة لهذا الامتحان.');
+  }
+
+  if (!attemptSnapshot.exists()) {
+    throw createHttpError(404, 'لا توجد محاولة نشطة لهذا الطالب على هذا الامتحان.');
+  }
+
+  const attemptRecord = {
+    ...attemptSnapshot.val(),
+    examId: exam.id,
+    identityKey
+  };
+
+  if (!attemptRecord.id || attemptRecord.id !== attemptPayload.attemptId) {
+    throw createHttpError(403, 'رمز المحاولة لا يطابق محاولة الطالب الحالية.');
+  }
+
+  const existingSubmission = await readExistingSubmissionByAttemptId(exam.id, attemptRecord.id);
 
   if (existingSubmission) {
-    throw createHttpError(409, 'تم تسليم هذا الامتحان مسبقًا ولا يمكن إرسال محاولة جديدة.');
+    await attemptRef.update({
+      status: 'submitted',
+      submittedAt: Number(existingSubmission.submittedAt) || Date.now(),
+      submissionId: existingSubmission.id,
+      lastSeenAt: Date.now()
+    });
+    return {
+      receipt: {
+        ...buildStudentReceipt(exam, existingSubmission, {
+          trackingToken: createStudentResultToken(exam.id, existingSubmission.id, attemptRecord.id)
+        }),
+        receiptToken: createStudentReceiptToken(exam.id, existingSubmission.id, attemptRecord.id),
+        resultToken: createStudentResultToken(exam.id, existingSubmission.id, attemptRecord.id)
+      }
+    };
+  }
+
+  try {
+    assertExamWithinAllowedTime(attemptRecord);
+  } catch (error) {
+    if (error.status === 408) {
+      await attemptRef.update({
+        status: 'expired',
+        expiredAt: Date.now(),
+        lastSeenAt: Date.now()
+      });
+    }
+    throw error;
   }
 
   const questions = normalizeExamQuestions(exam.questions);
@@ -1937,15 +2319,16 @@ async function submitStudentExam(examId, body = {}) {
   const answeredCount = answers.filter((answer) => answer >= 0).length;
   const score = calculateScore(correctAnswers, answers);
   const pct = questions.length ? Math.round((score / questions.length) * 100) : 0;
-  const submissionRef = database.ref(firebasePath('submissions', exam.id)).push();
+  const submissionRef = database.ref(firebasePath('submissions', exam.id, attemptRecord.id));
   const submittedAt = Date.now();
   const submissionPayload = {
-    id: submissionRef.key,
+    id: attemptRecord.id,
     examId: exam.id,
     examCode: String(exam.code || ''),
-    studentName: identity.studentName,
-    studentGroup: identity.studentGroup,
-    studentKey: identity.studentKey,
+    studentName: String(attemptRecord.studentName || identity.studentName),
+    studentGroup: String(attemptRecord.studentGroup || identity.studentGroup),
+    studentUid: session?.uid || null,
+    attemptId: attemptRecord.id,
     answers,
     answeredCount,
     totalQuestions: questions.length,
@@ -1955,13 +2338,49 @@ async function submitStudentExam(examId, body = {}) {
     submittedAt
   };
 
-  await submissionRef.set(submissionPayload);
-  const resultToken = createStudentResultToken(exam.id, submissionRef.key, identity.studentKey);
+  const transactionResult = await submissionRef.transaction((current) => {
+    if (current) {
+      return;
+    }
+
+    return submissionPayload;
+  });
+  const storedSubmission = transactionResult.committed
+    ? { id: attemptRecord.id, ...transactionResult.snapshot.val() }
+    : await readExistingSubmissionByAttemptId(exam.id, attemptRecord.id);
+
+  if (!storedSubmission) {
+    throw createHttpError(409, 'تعذر تأكيد تسليم الإجابات. حاول مرة أخرى.');
+  }
+
+  await attemptRef.update({
+    status: 'submitted',
+    submittedAt: Number(storedSubmission.submittedAt) || submittedAt,
+    submissionId: storedSubmission.id,
+    lastSeenAt: Date.now()
+  });
+
+  // Record in student history if authenticated
+  if (session?.uid) {
+    const historyEntry = {
+      examId: exam.id,
+      examTitle: exam.title,
+      examCode: exam.code,
+      submissionId: storedSubmission.id,
+      score: storedSubmission.score,
+      total: storedSubmission.totalQuestions,
+      pct: storedSubmission.pct,
+      at: storedSubmission.submittedAt || submittedAt
+    };
+    await database.ref(firebasePath('studentHistory', session.uid, storedSubmission.id)).set(historyEntry);
+  }
+
+  const resultToken = createStudentResultToken(exam.id, storedSubmission.id, attemptRecord.id);
 
   return {
     receipt: {
-      ...buildStudentReceipt(exam, submissionPayload, { trackingToken: resultToken }),
-      receiptToken: createStudentReceiptToken(exam.id, submissionRef.key, identity.studentKey),
+      ...buildStudentReceipt(exam, storedSubmission, { trackingToken: resultToken }),
+      receiptToken: createStudentReceiptToken(exam.id, storedSubmission.id, attemptRecord.id),
       resultToken
     }
   };
@@ -1981,17 +2400,17 @@ async function readStudentReceipt(examId, submissionId, receiptToken) {
     ...submissionSnapshot.val()
   };
 
-  if (submission.studentKey !== tokenPayload.studentKey) {
+  if (submission.attemptId !== tokenPayload.attemptId) {
     throw createHttpError(403, 'هذا الإيصال لا يخص نفس محاولة الطالب.');
   }
 
   return {
     receipt: {
       ...buildStudentReceipt(exam, submission, {
-        trackingToken: createStudentResultToken(examId, submissionId, tokenPayload.studentKey)
+        trackingToken: createStudentResultToken(examId, submissionId, tokenPayload.attemptId)
       }),
       receiptToken,
-      resultToken: createStudentResultToken(examId, submissionId, tokenPayload.studentKey)
+      resultToken: createStudentResultToken(examId, submissionId, tokenPayload.attemptId)
     }
   };
 }
@@ -2040,7 +2459,7 @@ async function lookupPublishedStudentResult(body = {}) {
 
   const submission = submissionSnapshot.val();
 
-  if (!submission || submission.studentKey !== tokenPayload.studentKey) {
+  if (!submission || submission.attemptId !== tokenPayload.attemptId) {
     throw createHttpError(403, 'لا تملك صلاحية عرض هذه النتيجة.');
   }
 
@@ -2092,406 +2511,921 @@ function createId(prefix) {
   return `${prefix}_${crypto.randomBytes(16).toString('hex')}`;
 }
 
-async function serveStaticFile(response, filePath, contentType) {
-  try {
-    const content = await fs.promises.readFile(filePath);
-    response.writeHead(200, {
-      'Content-Type': contentType,
-      'Cache-Control': 'no-store',
-      'X-Content-Type-Options': 'nosniff'
+function getClientIp(request) {
+  const forwarded = request.headers['x-forwarded-for'];
+  if (forwarded) {
+    return String(forwarded).split(',')[0].trim();
+  }
+  return request.socket.remoteAddress || 'unknown';
+}
+
+function safeStringify(obj) {
+  const cache = new Set();
+  return JSON.stringify(obj, (key, value) => {
+    if (typeof value === 'object' && value !== null) {
+      if (cache.has(value)) return '[Circular]';
+      cache.add(value);
+    }
+    if (key === 'password' || key === 'answers' || key === 'correctAnswers') return '[HIDDEN]';
+    if (key === 'questions') return Array.isArray(value) ? `[Array(${value.length})]` : '[HIDDEN]';
+    if (Buffer.isBuffer(value) || value?.type === 'Buffer') return '[Buffer]';
+    if (typeof key === 'string' && key.toLowerCase().includes('token') && typeof value === 'string' && value.length > 20) {
+      return value.substring(0, 6) + '...' + value.substring(value.length - 6);
+    }
+    return value;
+  });
+}
+
+function logMessage(level, category, message, meta = {}) {
+  console.log(`[${new Date().toISOString()}] [${level}] [${category}] ${message} | ${safeStringify(meta)}`);
+}
+
+function logInfo(category, message, meta = {}) { logMessage('INFO', category, message, meta); }
+function logWarn(category, message, meta = {}) { logMessage('WARN', category, message, meta); }
+function logSecurity(category, message, meta = {}) { logMessage('SECURITY', category, message, meta); }
+function logAudit(category, message, meta = {}) { logMessage('AUDIT', category, message, meta); }
+function logError(category, message, meta = {}, err = null) {
+  const errDetails = err ? { errorMessage: err.message, stack: process.env.NODE_ENV !== 'production' ? err.stack : undefined } : {};
+  console.error(`[${new Date().toISOString()}] [ERROR] [${category}] ${message} | ${safeStringify({ ...meta, ...errDetails })}`);
+}
+
+// ============================================================
+// EXPRESS APPLICATION
+// ============================================================
+
+const app = express();
+
+// Trust proxy if behind a load balancer (e.g. Firebase Hosting, Heroku, etc.)
+app.set('trust proxy', 1);
+
+// --- Security Headers (Helmet) ---
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+      "img-src": ["'self'", "data:", "https://firebasestorage.googleapis.com"],
+      "script-src": ["'self'", "'unsafe-inline'", "https://www.gstatic.com"],
+      "connect-src": ["'self'", "https://firebasestorage.googleapis.com", "https://*.firebaseio.com"]
+    },
+  },
+  crossOriginEmbedderPolicy: false // Often needed for Firebase Storage images
+}));
+
+// --- Prevent HTTP Parameter Pollution ---
+app.use(hpp());
+
+// --- Block access to sensitive files ---
+app.use((req, res, next) => {
+  const sensitivePatterns = [
+    /^\/\.env/i,
+    /^\/\.git/i,
+    /^\/firebase-service-account/i,
+    /^\/package(-lock)?\.json/i,
+    /^\/Dockerfile/i,
+    /^\/database\.rules\.json/i,
+    /^\/firebase\.json/i,
+    /^\/node_modules/i,
+    /\.(bak|config|sql|log|sh|php)$/i
+  ];
+  
+  if (sensitivePatterns.some(pattern => pattern.test(req.path))) {
+    logSecurity('Access Control', 'Blocked attempt to access sensitive file', {
+      requestId: req.requestId,
+      ip: getClientIp(req),
+      path: req.path
     });
-    response.end(content);
-  } catch (error) {
-    sendText(response, 404, 'الملف غير موجود.');
+    return res.status(403).send('Forbidden');
   }
-}
-
-async function handleRequest(request, response) {
-  const url = new URL(request.url, `http://${request.headers.host || 'localhost'}`);
-  const pathname = decodeURIComponent(url.pathname);
-
-  try {
-    const corsApplied = applyCorsHeaders(request, response);
-
-    if (request.method === 'OPTIONS') {
-      if (request.headers.origin && !corsApplied) {
-        sendJson(response, 403, { error: 'This origin is not allowed.' });
-        return;
-      }
-
-      response.writeHead(204);
-      response.end();
-      return;
-    }
-
-    if (pathname.startsWith('/api/') && request.headers.origin && !corsApplied) {
-      sendJson(response, 403, { error: 'This origin is not allowed.' });
-      return;
-    }
-
-    if (request.method === 'GET' && (pathname === '/' || pathname === '/index.html' || pathname === `/${HTML_FILE}`)) {
-      await serveStaticFile(response, path.join(ROOT_DIR, HTML_FILE), 'text/html; charset=utf-8');
-      return;
-    }
-
-    if (request.method === 'GET' && pathname === `/${STYLE_FILE}`) {
-      await serveStaticFile(response, path.join(ROOT_DIR, STYLE_FILE), 'text/css; charset=utf-8');
-      return;
-    }
-
-    if (request.method === 'GET' && pathname === `/${SCRIPT_FILE}`) {
-      await serveStaticFile(response, path.join(ROOT_DIR, SCRIPT_FILE), 'application/javascript; charset=utf-8');
-      return;
-    }
-
-    if (request.method === 'GET' && pathname === `/${APP_CONFIG_FILE}`) {
-      await serveStaticFile(response, path.join(ROOT_DIR, APP_CONFIG_FILE), 'application/javascript; charset=utf-8');
-      return;
-    }
-
-    if (request.method === 'POST' && pathname === '/api/admin/uploads') {
-      requireAdmin(request);
-      const fileName = decodeUploadHeader(String(request.headers['x-upload-filename'] || ''));
-      const contentType = String(request.headers['x-upload-content-type'] || request.headers['content-type'] || 'application/octet-stream')
-        .split(';')[0]
-        .trim()
-        .toLowerCase();
-
-      if (!fileName) {
-        throw createHttpError(400, 'اسم الملف المرفوع مطلوب.');
-      }
-
-      const buffer = await readBinaryBody(request, MAX_ATTACHMENT_SIZE);
-      const attachment = await uploadTemporaryAttachment({
-        fileName,
-        contentType,
-        size: buffer.length,
-        buffer
-      });
-      sendJson(response, 201, { attachment });
-      return;
-    }
-
-    if (request.method === 'DELETE' && pathname === '/api/admin/uploads') {
-      requireAdmin(request);
-      const body = await readJsonBody(request);
-      const storagePath = typeof body.storagePath === 'string' ? body.storagePath.trim() : '';
-
-      if (!isTemporaryAttachmentPath(storagePath)) {
-        throw createHttpError(400, 'لا يمكن حذف هذا المرفق من الواجهة مباشرة.');
-      }
-
-      await deleteStorageFile(storagePath);
-      sendJson(response, 200, { success: true });
-      return;
-    }
-
-    if (request.method === 'GET' && pathname === '/api/admin/session') {
-      const adminSession = readAdminSessionFromRequest(request);
-
-      if (!adminSession) {
-        sendJson(response, 200, { authenticated: false });
-        return;
-      }
-
-      sendJson(response, 200, {
-        authenticated: true,
-        adminUid: 'admin'
-      });
-      return;
-    }
-
-    if (request.method === 'POST' && pathname === '/api/admin/login') {
-      const body = await readJsonBody(request);
-      if (!passwordMatches(body.password, ADMIN_PASSWORD)) {
-        throw createHttpError(401, 'كلمة مرور المدرس غير صحيحة.');
-      }
-
-      sendJson(
-        response,
-        200,
-        {
-          success: true,
-          adminUid: 'admin'
-        },
-        { 'Set-Cookie': createSessionCookie(request, createSignedSessionCookieValue()) }
-      );
-      return;
-    }
-
-    if (request.method === 'POST' && pathname === '/api/admin/logout') {
-      sendJson(
-        response,
-        200,
-        { success: true },
-        { 'Set-Cookie': clearSessionCookie(request) }
-      );
-      return;
-    }
-
-    if (request.method === 'GET' && pathname === '/api/admin/dashboard') {
-      requireAdmin(request);
-      const { examsMap, keysMap, submissionsMap } = await readAdminCollections();
-      sendJson(response, 200, buildAdminDashboardPayload(examsMap, keysMap, submissionsMap));
-      return;
-    }
-
-    if (request.method === 'POST' && pathname === '/api/admin/exams') {
-      requireAdmin(request);
-      const body = await readJsonBody(request);
-
-      const createdExam = await createAdminExam(body);
-      sendJson(response, 201, { exam: createdExam });
-      return;
-    }
-
-    const statusMatch = pathname.match(/^\/api\/admin\/exams\/([^/]+)\/status$/);
-
-    if (request.method === 'PATCH' && statusMatch) {
-      requireAdmin(request);
-      const examId = statusMatch[1];
-      const body = await readJsonBody(request);
-      const active = await setAdminExamStatus(examId, body.active);
-      sendJson(response, 200, { success: true, active });
-      return;
-    }
-
-    const resultsMatch = pathname.match(/^\/api\/admin\/exams\/([^/]+)\/results$/);
-
-    if (request.method === 'GET' && resultsMatch) {
-      requireAdmin(request);
-      const examId = resultsMatch[1];
-      const adminExamBundle = await readAdminExamBundle(examId);
-      sendJson(
-        response,
-        200,
-        buildAdminExamResultsPayload(
-          examId,
-          adminExamBundle.exam,
-          adminExamBundle.keyData,
-          adminExamBundle.submissions
-        )
-      );
-      return;
-    }
-
-    const publishResultsMatch = pathname.match(/^\/api\/admin\/exams\/([^/]+)\/publish-results$/);
-
-    if (request.method === 'POST' && publishResultsMatch) {
-      requireAdmin(request);
-      const examId = publishResultsMatch[1];
-      const result = await publishAdminExamResults(examId);
-      sendJson(response, 200, { success: true, ...result });
-      return;
-    }
-
-    const deleteMatch = pathname.match(/^\/api\/admin\/exams\/([^/]+)$/);
-
-    if (request.method === 'DELETE' && deleteMatch) {
-      requireAdmin(request);
-      const examId = deleteMatch[1];
-      await deleteAdminExam(examId);
-      sendJson(response, 200, { success: true });
-      return;
-    }
-
-    if (request.method === 'GET' && pathname === '/api/admin/question-banks') {
-      requireAdmin(request);
-      const requestId = createDebugRequestId('qb-list');
-      const banks = await listQuestionBanks({ requestId });
-      sendJson(response, 200, { banks });
-      return;
-    }
-
-    if (request.method === 'POST' && pathname === '/api/admin/question-banks') {
-      requireAdmin(request);
-      const body = await readJsonBody(request);
-      const requestId = typeof body?.debugRequestId === 'string' && body.debugRequestId.trim()
-        ? body.debugRequestId.trim()
-        : createDebugRequestId('qb-create');
-      logQuestionBankOp('route:create', {
-        requestId,
-        payload: summarizeQuestionBankPayload(body)
-      });
-      const bank = await createQuestionBank(body, { requestId });
-      sendJson(response, 201, { bank });
-      return;
-    }
-
-    const bankQuestionsItemMatch = pathname.match(/^\/api\/admin\/question-banks\/([^/]+)\/questions\/([^/]+)$/);
-
-    if (request.method === 'PATCH' && bankQuestionsItemMatch) {
-      requireAdmin(request);
-      const bankId = bankQuestionsItemMatch[1];
-      const questionId = bankQuestionsItemMatch[2];
-      const body = await readJsonBody(request);
-      const payload = await updateBankQuestion(bankId, questionId, body);
-      sendJson(response, 200, payload);
-      return;
-    }
-
-    if (request.method === 'DELETE' && bankQuestionsItemMatch) {
-      requireAdmin(request);
-      const bankId = bankQuestionsItemMatch[1];
-      const questionId = bankQuestionsItemMatch[2];
-      const payload = await deleteBankQuestion(bankId, questionId);
-      sendJson(response, 200, payload);
-      return;
-    }
-
-    const bankQuestionsMatch = pathname.match(/^\/api\/admin\/question-banks\/([^/]+)\/questions$/);
-
-    if (request.method === 'GET' && bankQuestionsMatch) {
-      requireAdmin(request);
-      const bankId = bankQuestionsMatch[1];
-      const bank = await getQuestionBankRecord(bankId);
-      sendJson(response, 200, {
-        bank: {
-          id: bank.id,
-          title: bank.title,
-          description: bank.description,
-          createdAt: bank.createdAt,
-          updatedAt: bank.updatedAt,
-          questionCount: bank.questionCount
-        },
-        questions: bank.questions
-      });
-      return;
-    }
-
-    if (request.method === 'POST' && bankQuestionsMatch) {
-      requireAdmin(request);
-      const bankId = bankQuestionsMatch[1];
-      const body = await readJsonBody(request);
-      const payload = await addQuestionToBank(bankId, body);
-      sendJson(response, 201, payload);
-      return;
-    }
-
-    const bankImportMatch = pathname.match(/^\/api\/admin\/question-banks\/([^/]+)\/import$/);
-
-    if (request.method === 'POST' && bankImportMatch) {
-      requireAdmin(request);
-      const bankId = bankImportMatch[1];
-      const body = await readJsonBody(request);
-      const requestId = typeof body?.debugRequestId === 'string' && body.debugRequestId.trim()
-        ? body.debugRequestId.trim()
-        : createDebugRequestId('qb-import');
-      logQuestionBankOp('route:import', {
-        requestId,
-        bankId,
-        requestedQuestionIds: Array.isArray(body?.questionIds) ? body.questionIds : []
-      });
-      const payload = await importQuestionBankQuestions(bankId, body, { requestId });
-      sendJson(response, 200, payload);
-      return;
-    }
-
-    const bankItemMatch = pathname.match(/^\/api\/admin\/question-banks\/([^/]+)$/);
-
-    if (request.method === 'GET' && bankItemMatch) {
-      requireAdmin(request);
-      const bank = await getQuestionBankRecord(bankItemMatch[1]);
-      sendJson(response, 200, { bank });
-      return;
-    }
-
-    if (request.method === 'PATCH' && bankItemMatch) {
-      requireAdmin(request);
-      const body = await readJsonBody(request);
-      const requestId = typeof body?.debugRequestId === 'string' && body.debugRequestId.trim()
-        ? body.debugRequestId.trim()
-        : createDebugRequestId('qb-update');
-      logQuestionBankOp('route:update', {
-        requestId,
-        bankId: bankItemMatch[1],
-        expectedUpdatedAt: Number(body?.expectedUpdatedAt || 0),
-        payload: summarizeQuestionBankPayload(body)
-      });
-      const bank = await updateQuestionBank(bankItemMatch[1], body, { requestId });
-      sendJson(response, 200, { bank });
-      return;
-    }
-
-    if (request.method === 'DELETE' && bankItemMatch) {
-      requireAdmin(request);
-      const body = await readJsonBody(request);
-      const requestId = typeof body?.debugRequestId === 'string' && body.debugRequestId.trim()
-        ? body.debugRequestId.trim()
-        : createDebugRequestId('qb-delete');
-      logQuestionBankOp('route:delete', {
-        requestId,
-        bankId: bankItemMatch[1]
-      });
-      await deleteQuestionBankRecord(bankItemMatch[1], { requestId });
-      sendJson(response, 200, { success: true });
-      return;
-    }
-
-    if (request.method === 'POST' && pathname === '/api/student/exam-access') {
-      const body = await readJsonBody(request);
-      const exam = await resolveExamAccess(body);
-      sendJson(response, 200, { exam: sanitizeExamPreview(exam.id, exam) });
-      return;
-    }
-
-    const studentStartMatch = pathname.match(/^\/api\/student\/exams\/([^/]+)\/start$/);
-
-    if (request.method === 'POST' && studentStartMatch) {
-      const examId = studentStartMatch[1];
-      const body = await readJsonBody(request);
-      const payload = await startStudentExam(examId, body);
-      sendJson(response, 200, payload);
-      return;
-    }
-
-    const studentSubmitMatch = pathname.match(/^\/api\/student\/exams\/([^/]+)\/submit$/);
-
-    if (request.method === 'POST' && studentSubmitMatch) {
-      const examId = studentSubmitMatch[1];
-      const body = await readJsonBody(request);
-      const payload = await submitStudentExam(examId, body);
-      sendJson(response, 201, payload);
-      return;
-    }
-
-    const studentReceiptMatch = pathname.match(/^\/api\/student\/exams\/([^/]+)\/receipt\/([^/]+)$/);
-
-    if (request.method === 'GET' && studentReceiptMatch) {
-      const examId = studentReceiptMatch[1];
-      const submissionId = studentReceiptMatch[2];
-      const receiptToken = typeof url.searchParams.get('token') === 'string'
-        ? url.searchParams.get('token')
-        : '';
-      const payload = await readStudentReceipt(examId, submissionId, receiptToken);
-      sendJson(response, 200, payload);
-      return;
-    }
-
-    if (request.method === 'POST' && pathname === '/api/student/results/lookup') {
-      const body = await readJsonBody(request);
-      const payload = await lookupPublishedStudentResult(body);
-      sendJson(response, 200, payload);
-      return;
-    }
-
-    sendText(response, 404, 'الصفحة المطلوبة غير موجودة.');
-  } catch (error) {
-    const status = error.status || 500;
-    const message = status >= 500 ? 'حدث خطأ داخلي في الخادم.' : error.message;
-    sendJson(response, status, { error: message });
-  }
-}
-
-const server = http.createServer((request, response) => {
-  handleRequest(request, response);
+  next();
 });
 
-server.listen(PORT, HOST, () => {
+// --- Request ID Middleware ---
+app.use((request, response, next) => {
+  request.requestId = createId('req');
+  next();
+});
+
+// --- Global Rate Limiter ---
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 1000, // limit each IP to 1000 requests per windowMs
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'طلبات كثيرة جداً، يرجى المحاولة لاحقاً.' },
+  keyGenerator: (req) => getClientIp(req)
+});
+app.use(globalLimiter);
+
+// --- Stricter Rate Limiters for sensitive routes ---
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'محاولات دخول كثيرة جداً، يرجى الانتظار 15 دقيقة.' }
+});
+
+const uploadLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 50,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'تجاوزت الحد المسموح لرفع الملفات، يرجى المحاولة لاحقاً.' }
+});
+
+const studentAccessLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'محاولات وصول كثيرة جداً، يرجى المحاولة لاحقاً.' }
+});
+
+const studentSubmitLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'محاولات تسليم كثيرة جداً، يرجى المحاولة لاحقاً.' }
+});
+
+app.use('/api/admin/login', loginLimiter);
+app.use('/api/admin/uploads', uploadLimiter);
+app.use('/api/student/exam-access', studentAccessLimiter);
+app.use('/api/student/exams/:examId/start', studentAccessLimiter);
+app.use('/api/student/exams/:examId/submit', studentSubmitLimiter);
+app.use('/api/student/results/lookup', studentAccessLimiter);
+
+// --- CORS Middleware ---
+app.use((request, response, next) => {
+  const corsApplied = applyCorsHeaders(request, response);
+
+  if (request.method === 'OPTIONS') {
+    if (request.headers.origin && !corsApplied) {
+      return sendJson(response, 403, { error: 'This origin is not allowed.' });
+    }
+    response.writeHead(204);
+    response.end();
+    return;
+  }
+
+  if (request.path.startsWith('/api/') && request.headers.origin && !corsApplied) {
+    return sendJson(response, 403, { error: 'This origin is not allowed.' });
+  }
+
+  next();
+});
+
+// --- Logging Middleware ---
+app.use((request, response, next) => {
+  logInfo('HTTP', 'Incoming Request', { requestId: request.requestId, method: request.method, pathname: request.path, ip: getClientIp(request) });
+  next();
+});
+
+// --- Static Files & Client App ---
+app.use(express.static(PUBLIC_DIR, { 
+  index: 'index.html',
+  dotfiles: 'deny',
+  setHeaders: (res, path) => {
+    if (path.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache');
+    }
+  }
+}));
+
+// JSON body parser for all API routes EXCEPT binary uploads
+const parseJsonBody = express.json({ limit: '10mb' });
+
+// ============================================================
+// HEALTH CHECK
+// ============================================================
+
+app.get('/api/health', (request, response) => {
+  sendJson(response, 200, { status: 'ok', environment: process.env.NODE_ENV || 'production' });
+});
+
+// ============================================================
+// ADMIN ROUTES — UPLOADS (binary body — no JSON parser)
+// ============================================================
+
+app.post('/api/admin/uploads', async (request, response, next) => {
+  try {
+    await requireTeacher(request, 'canUploadFiles');
+    const fileName = decodeUploadHeader(String(request.headers['x-upload-filename'] || ''));
+    const contentType = String(request.headers['x-upload-content-type'] || request.headers['content-type'] || 'application/octet-stream')
+      .split(';')[0].trim().toLowerCase();
+
+    if (!fileName) throw createHttpError(400, 'اسم الملف المرفوع مطلوب.');
+
+    // Phase 4: Early rejection — check Content-Length before reading into RAM
+    const contentLength = Number(request.headers['content-length'] || 0);
+    if (contentLength > MAX_ATTACHMENT_SIZE) {
+      throw createHttpError(413, 'Attachment file is larger than the allowed limit.');
+    }
+
+    const buffer = await readBinaryBody(request, MAX_ATTACHMENT_SIZE);
+    const attachment = await uploadTemporaryAttachment({ fileName, contentType, size: buffer.length, buffer });
+    sendJson(response, 201, { attachment });
+  } catch (err) { next(err); }
+});
+
+app.delete('/api/admin/uploads', parseJsonBody, async (request, response, next) => {
+  try {
+    await requireTeacher(request, 'canUploadFiles');
+    const storagePath = typeof request.body?.storagePath === 'string' ? request.body.storagePath.trim() : '';
+    if (!isTemporaryAttachmentPath(storagePath)) throw createHttpError(400, 'لا يمكن حذف هذا المرفق من الواجهة مباشرة.');
+    await deleteStorageFile(storagePath);
+    sendJson(response, 200, { success: true });
+  } catch (err) { next(err); }
+});
+
+async function findUserByUsername(username) {
+  const normalized = normalizeAdminUsername(username);
+  // First check static admins (fallback)
+  const staticAdmin = getAdminAccount(normalized);
+  if (staticAdmin) {
+    const isSuper = process.env.SUPER_ADMIN_USERNAME && normalized === normalizeAdminUsername(process.env.SUPER_ADMIN_USERNAME);
+    return { ...staticAdmin, role: isSuper ? 'super_admin' : 'admin', uid: staticAdmin.username, isActive: true };
+  }
+
+  // Then check database
+  const snapshot = await database.ref(firebasePath('users')).orderByChild('username').equalTo(normalized).get();
+  if (!snapshot.exists()) return null;
+  const users = snapshot.val();
+  const uid = Object.keys(users)[0];
+  return { uid, ...users[uid] };
+}
+
+async function ensureUsernameUnique(username) {
+  const user = await findUserByUsername(username);
+  if (user) throw createHttpError(409, 'اسم المستخدم هذا مستخدم بالفعل.');
+}
+
+// ============================================================
+// AUTH ROUTES — SESSION & LOGIN
+// ============================================================
+
+app.get('/api/auth/session', (request, response) => {
+  const session = readSessionFromRequest(request);
+  if (!session) {
+    sendJson(response, 200, { authenticated: false });
+    return;
+  }
+  sendJson(response, 200, {
+    authenticated: true,
+    uid: session.uid,
+    name: session.name,
+    role: session.role
+  });
+});
+
+// Legacy backward compatibility for old admin JS
+app.get('/api/admin/session', (request, response) => {
+  const session = readSessionFromRequest(request);
+  if (!session || !['admin', 'super_admin', 'teacher'].includes(session.role)) {
+    sendJson(response, 200, { authenticated: false });
+    return;
+  }
+  sendJson(response, 200, {
+    authenticated: true,
+    adminUid: session.uid,
+    adminName: session.name
+  });
+});
+
+app.post('/api/auth/login', parseJsonBody, async (request, response, next) => {
+  try {
+    const username = normalizeAdminUsername(request.body?.username);
+    const password = String(request.body?.password || '');
+    
+    const user = await findUserByUsername(username);
+
+    if (!user) {
+      throw createHttpError(401, 'بيانات الدخول غير صحيحة.');
+    }
+
+    if (user.isActive === false) {
+      throw createHttpError(403, 'هذا الحساب موقوف حالياً. يرجى مراجعة الإدارة.');
+    }
+
+    // Verify password
+    if (user.passwordHash && !verifyPasswordHash(password, user.passwordHash)) {
+       logSecurity('Login', 'Failed login attempt', {
+        requestId: request.requestId,
+        ip: getClientIp(request),
+        username: username || 'unknown'
+      });
+      throw createHttpError(401, 'بيانات الدخول غير صحيحة.');
+    }
+
+    logAudit('Login', 'Successful login', {
+      requestId: request.requestId,
+      ip: getClientIp(request),
+      username: user.username || user.uid,
+      role: user.role
+    });
+
+    const sessionCookieValue = createSignedSessionCookieValue({
+      role: user.role,
+      uid: user.uid,
+      name: user.displayName || user.name || user.username
+    });
+
+    sendJson(
+      response,
+      200,
+      { 
+        success: true, 
+        uid: user.uid, 
+        name: user.displayName || user.name || user.username, 
+        role: user.role
+      },
+      { 'Set-Cookie': createSessionCookie(request, sessionCookieValue) }
+    );
+  } catch (err) { next(err); }
+});
+
+// Legacy backward compatibility
+app.post('/api/admin/login', parseJsonBody, async (request, response, next) => {
+  request.url = '/api/auth/login';
+  app.handle(request, response, next);
+});
+
+app.post('/api/auth/logout', (request, response) => {
+  sendJson(response, 200, { success: true }, { 'Set-Cookie': clearSessionCookie(request) });
+});
+
+app.post('/api/admin/logout', (request, response) => {
+  sendJson(response, 200, { success: true }, { 'Set-Cookie': clearSessionCookie(request) });
+});
+
+// ============================================================
+// TEACHER ROUTES — STUDENT MANAGEMENT
+// ============================================================
+
+app.get('/api/teacher/students', async (request, response, next) => {
+  try {
+    const teacher = await requireTeacher(request, 'canManageStudents');
+    const snapshot = await database.ref(firebasePath('users'))
+      .orderByChild('createdBy').equalTo(teacher.uid).get();
+    
+    const students = [];
+    if (snapshot.exists()) {
+      Object.entries(snapshot.val()).forEach(([uid, user]) => {
+        if (user.role === 'student') {
+          const { passwordHash: _omit, ...safeUser } = user;
+          students.push({ uid, ...safeUser });
+        }
+      });
+    }
+    sendJson(response, 200, { students });
+  } catch (err) { next(err); }
+});
+
+app.post('/api/teacher/students', parseJsonBody, async (request, response, next) => {
+  try {
+    const teacher = await requireTeacher(request, 'canManageStudents');
+    const body = request.body || {};
+    const username = normalizeAdminUsername(body.username);
+    const password = String(body.password || '');
+    const name = sanitizeText(body.name, 'اسم الطالب', 120);
+
+    if (!username || password.length < 6) throw createHttpError(400, 'بيانات الطالب غير كاملة أو كلمة المرور ضعيفة جداً.');
+    await ensureUsernameUnique(username);
+
+    // Create password hash using existing scrypt parameters
+    const salt = crypto.randomBytes(16);
+    const options = { N: 16384, r: 8, p: 1, maxmem: 128 * 1024 * 1024 };
+    const derivedKey = crypto.scryptSync(password, salt, 64, options);
+    const passwordHash = `scrypt$${options.N}$${options.r}$${options.p}$${salt.toString('base64url')}$${derivedKey.toString('base64url')}`;
+
+    const studentUid = database.ref(firebasePath('users')).push().key || createId('std');
+    const studentData = {
+      username,
+      name,
+      passwordHash,
+      role: 'student',
+      isActive: true,
+      createdBy: teacher.uid,
+      createdAt: admin.database.ServerValue.TIMESTAMP
+    };
+
+    await database.ref(firebasePath('users', studentUid)).set(studentData);
+    const { passwordHash: _omit, ...safeResult } = studentData;
+    sendJson(response, 201, { student: { uid: studentUid, ...safeResult } });
+  } catch (err) { next(err); }
+});
+
+app.get('/api/teacher/students/:studentId', async (request, response, next) => {
+  try {
+    const teacher = await requireTeacher(request, 'canManageStudents');
+    const studentSnapshot = await database.ref(firebasePath('users', request.params.studentId)).get();
+    
+    if (!studentSnapshot.exists() || studentSnapshot.val().createdBy !== teacher.uid) {
+      throw createHttpError(404, 'الطالب غير موجود أو لا يتبع لك.');
+    }
+    
+    const { passwordHash: _omit, ...safeUser } = studentSnapshot.val();
+    sendJson(response, 200, { student: { uid: request.params.studentId, ...safeUser } });
+  } catch (err) { next(err); }
+});
+
+app.patch('/api/teacher/students/:studentId', parseJsonBody, async (request, response, next) => {
+  try {
+    const teacher = await requireTeacher(request, 'canManageStudents');
+    const { studentId } = request.params;
+    const body = request.body || {};
+    const username = normalizeAdminUsername(body.username);
+    const name = sanitizeText(body.name, 'اسم الطالب', 120);
+
+    const studentRef = database.ref(firebasePath('users', studentId));
+    const snapshot = await studentRef.get();
+    const studentData = snapshot.val();
+
+    if (!snapshot.exists() || studentData.createdBy !== teacher.uid || studentData.role !== 'student') {
+      throw createHttpError(404, 'الطالب غير موجود أو لا يتبع لك.');
+    }
+
+    const updates = { name };
+    if (username && username !== studentData.username) {
+      await ensureUsernameUnique(username);
+      updates.username = username;
+    }
+
+    await studentRef.update(updates);
+    sendJson(response, 200, { success: true });
+  } catch (err) { next(err); }
+});
+
+app.patch('/api/teacher/students/:studentId/status', parseJsonBody, async (request, response, next) => {
+  try {
+    const teacher = await requireTeacher(request, 'canManageStudents');
+    const { studentId } = request.params;
+    const isActive = Boolean(request.body?.isActive);
+    const studentRef = database.ref(firebasePath('users', studentId));
+    const snapshot = await studentRef.get();
+    const studentData = snapshot.val();
+
+    if (!snapshot.exists() || studentData.createdBy !== teacher.uid || studentData.role !== 'student') {
+      throw createHttpError(404, 'الطالب غير موجود أو لا يتبع لك.');
+    }
+
+    await studentRef.update({ isActive });
+    sendJson(response, 200, { success: true, isActive });
+  } catch (err) { next(err); }
+});
+
+app.patch('/api/teacher/students/:studentId/reset-password', parseJsonBody, async (request, response, next) => {
+  try {
+    const teacher = await requireTeacher(request, 'canManageStudents');
+    const { studentId } = request.params;
+    const newPassword = String(request.body?.password || '');
+    if (newPassword.length < 6) throw createHttpError(400, 'كلمة المرور يجب أن تكون 6 أحرف على الأقل.');
+
+    const studentRef = database.ref(firebasePath('users', studentId));
+    const snapshot = await studentRef.get();
+    const studentData = snapshot.val();
+
+    if (!snapshot.exists() || studentData.createdBy !== teacher.uid || studentData.role !== 'student') {
+      throw createHttpError(404, 'الطالب غير موجود أو لا يتبع لك.');
+    }
+
+    const salt = crypto.randomBytes(16);
+    const options = { N: 16384, r: 8, p: 1, maxmem: 128 * 1024 * 1024 };
+    const derivedKey = crypto.scryptSync(newPassword, salt, 64, options);
+    const passwordHash = `scrypt$${options.N}$${options.r}$${options.p}$${salt.toString('base64url')}$${derivedKey.toString('base64url')}`;
+
+    await studentRef.update({ passwordHash });
+    sendJson(response, 200, { success: true });
+  } catch (err) { next(err); }
+});
+
+app.delete('/api/teacher/students/:studentId', async (request, response, next) => {
+  try {
+    const teacher = await requireTeacher(request, 'canManageStudents');
+    const { studentId } = request.params;
+    const studentRef = database.ref(firebasePath('users', studentId));
+    const snapshot = await studentRef.get();
+    const studentData = snapshot.val();
+
+    if (!snapshot.exists() || studentData.createdBy !== teacher.uid || studentData.role !== 'student') {
+      throw createHttpError(404, 'الطالب غير موجود أو لا يتبع لك.');
+    }
+
+    await studentRef.remove();
+    sendJson(response, 200, { success: true });
+  } catch (err) { next(err); }
+});
+
+// ============================================================
+// SUPER ADMIN ROUTES — TEACHER MANAGEMENT
+// ============================================================
+
+app.get('/api/admin/teachers', async (request, response, next) => {
+  try {
+    requireSuperAdmin(request);
+    const snapshot = await database.ref(firebasePath('users'))
+      .orderByChild('role').equalTo('teacher').get();
+    const teachers = snapshot.exists() ? Object.entries(snapshot.val()).map(([uid, u]) => {
+      const { passwordHash: _omit, ...safe } = u;
+      return { uid, ...safe };
+    }) : [];
+    sendJson(response, 200, { teachers });
+  } catch (err) { next(err); }
+});
+
+app.post('/api/admin/teachers', parseJsonBody, async (request, response, next) => {
+  try {
+    const adminUser = requireSuperAdmin(request);
+    const body = request.body || {};
+    const username = normalizeAdminUsername(body.username);
+    const password = String(body.password || '');
+    const name = sanitizeText(body.name, 'اسم المدرس', 120);
+    const subject = sanitizeOptionalText(body.subject, 'المادة', 100);
+
+    if (!username || password.length < 8) throw createHttpError(400, 'بيانات المدرس غير كاملة أو كلمة المرور ضعيفة.');
+    await ensureUsernameUnique(username);
+
+    const salt = crypto.randomBytes(16);
+    const scryptOptions = { N: 16384, r: 8, p: 1, maxmem: 128 * 1024 * 1024 };
+    const derivedKey = crypto.scryptSync(password, salt, 64, scryptOptions);
+    const passwordHash = `scrypt$${scryptOptions.N}$${scryptOptions.r}$${scryptOptions.p}$${salt.toString('base64url')}$${derivedKey.toString('base64url')}`;
+
+    const teacherId = database.ref(firebasePath('users')).push().key || createId('tch');
+    const teacherData = {
+      username,
+      name,
+      subject,
+      passwordHash,
+      role: 'teacher',
+      isActive: true,
+      permissions: {
+        canCreateExam: true,
+        canEditExam: true,
+        canDeleteExam: true,
+        canManageQuestionBank: true,
+        canViewResults: true,
+        canPublishResults: true,
+        canManageStudents: true,
+        canUploadFiles: true,
+        canAccessReports: true,
+        canExportData: true,
+        ...(body.permissions || {})
+      },
+      createdBy: adminUser.uid,
+      createdAt: admin.database.ServerValue.TIMESTAMP
+    };
+
+    await database.ref(firebasePath('users', teacherId)).set(teacherData);
+    const { passwordHash: _omit, ...safeResult } = teacherData;
+    sendJson(response, 201, { teacher: { uid: teacherId, ...safeResult } });
+  } catch (err) { next(err); }
+});
+
+app.patch('/api/admin/teachers/:teacherId', parseJsonBody, async (request, response, next) => {
+  try {
+    requireSuperAdmin(request);
+    const { teacherId } = request.params;
+    const body = request.body || {};
+    const name = sanitizeText(body.name, 'اسم المدرس', 120);
+    const subject = sanitizeOptionalText(body.subject, 'المادة', 100);
+    const permissions = body.permissions || {};
+
+    const teacherRef = database.ref(firebasePath('users', teacherId));
+    const snapshot = await teacherRef.get();
+    const teacherData = snapshot.val();
+
+    if (!snapshot.exists() || teacherData.role !== 'teacher') {
+      throw createHttpError(404, 'المدرس غير موجود.');
+    }
+
+    const updates = { name, subject, permissions };
+    await teacherRef.update(updates);
+    sendJson(response, 200, { success: true });
+  } catch (err) { next(err); }
+});
+
+app.patch('/api/admin/teachers/:teacherId/status', parseJsonBody, async (request, response, next) => {
+  try {
+    requireSuperAdmin(request);
+    const { teacherId } = request.params;
+    const isActive = Boolean(request.body?.isActive);
+    
+    const teacherRef = database.ref(firebasePath('users', teacherId));
+    const snapshot = await teacherRef.get();
+
+    if (!snapshot.exists() || snapshot.val().role !== 'teacher') {
+      throw createHttpError(404, 'المدرس غير موجود.');
+    }
+
+    await teacherRef.update({ isActive });
+    sendJson(response, 200, { success: true, isActive });
+  } catch (err) { next(err); }
+});
+
+app.patch('/api/admin/teachers/:teacherId/reset-password', parseJsonBody, async (request, response, next) => {
+  try {
+    requireSuperAdmin(request);
+    const { teacherId } = request.params;
+    const newPassword = String(request.body?.password || '');
+    if (newPassword.length < 8) throw createHttpError(400, 'كلمة المرور يجب أن تكون 8 أحرف على الأقل.');
+
+    const teacherRef = database.ref(firebasePath('users', teacherId));
+    const snapshot = await teacherRef.get();
+
+    if (!snapshot.exists() || snapshot.val().role !== 'teacher') {
+      throw createHttpError(404, 'المدرس غير موجود.');
+    }
+
+    const salt = crypto.randomBytes(16);
+    const options = { N: 16384, r: 8, p: 1, maxmem: 128 * 1024 * 1024 };
+    const derivedKey = crypto.scryptSync(newPassword, salt, 64, options);
+    const passwordHash = `scrypt$${options.N}$${options.r}$${options.p}$${salt.toString('base64url')}$${derivedKey.toString('base64url')}`;
+
+    await teacherRef.update({ passwordHash });
+    sendJson(response, 200, { success: true });
+  } catch (err) { next(err); }
+});
+
+app.delete('/api/admin/teachers/:teacherId', async (request, response, next) => {
+  try {
+    requireSuperAdmin(request);
+    const { teacherId } = request.params;
+    
+    const teacherRef = database.ref(firebasePath('users', teacherId));
+    const snapshot = await teacherRef.get();
+
+    if (!snapshot.exists() || snapshot.val().role !== 'teacher') {
+      throw createHttpError(404, 'المدرس غير موجود.');
+    }
+
+    // Note: In a real system, you might want to delete their students/exams too, 
+    // or just deactivate the account. For now, we allow deletion.
+    await teacherRef.remove();
+    sendJson(response, 200, { success: true });
+  } catch (err) { next(err); }
+});
+
+// ============================================================
+// ADMIN ROUTES — DASHBOARD
+// ============================================================
+
+app.get('/api/admin/dashboard', async (request, response, next) => {
+  try {
+    await requireTeacher(request, 'canAccessReports');
+    const { examsMap, keysMap, submissionsMap } = await readAdminCollections();
+    sendJson(response, 200, buildAdminDashboardPayload(examsMap, keysMap, submissionsMap));
+  } catch (err) { next(err); }
+});
+
+// ============================================================
+// ADMIN ROUTES — EXAMS
+// ============================================================
+
+app.post('/api/admin/exams', parseJsonBody, async (request, response, next) => {
+  try {
+    await requireTeacher(request, 'canCreateExam');
+    const createdExam = await createAdminExam(request.body);
+    sendJson(response, 201, { exam: createdExam });
+  } catch (err) { next(err); }
+});
+
+app.patch('/api/admin/exams/:examId/status', parseJsonBody, async (request, response, next) => {
+  try {
+    await requireTeacher(request, 'canEditExam');
+    const active = await setAdminExamStatus(request.params.examId, request.body?.active);
+    sendJson(response, 200, { success: true, active });
+  } catch (err) { next(err); }
+});
+
+app.get('/api/admin/exams/:examId/results', async (request, response, next) => {
+  try {
+    await requireTeacher(request, 'canViewResults');
+    const bundle = await readAdminExamBundle(request.params.examId);
+    sendJson(response, 200, buildAdminExamResultsPayload(request.params.examId, bundle.exam, bundle.keyData, bundle.submissions));
+  } catch (err) { next(err); }
+});
+
+app.post('/api/admin/exams/:examId/publish-results', parseJsonBody, async (request, response, next) => {
+  try {
+    await requireTeacher(request, 'canPublishResults');
+    const result = await publishAdminExamResults(request.params.examId);
+    sendJson(response, 200, { success: true, ...result });
+  } catch (err) { next(err); }
+});
+
+app.delete('/api/admin/exams/:examId', async (request, response, next) => {
+  try {
+    await requireTeacher(request, 'canDeleteExam');
+    await deleteAdminExam(request.params.examId);
+    sendJson(response, 200, { success: true });
+  } catch (err) { next(err); }
+});
+
+// ============================================================
+// ADMIN ROUTES — QUESTION BANKS
+// ============================================================
+
+app.get('/api/admin/question-banks', async (request, response, next) => {
+  try {
+    await requireTeacher(request, 'canManageQuestionBank');
+    const banks = await listQuestionBanks({ requestId: createDebugRequestId('qb-list') });
+    sendJson(response, 200, { banks });
+  } catch (err) { next(err); }
+});
+
+app.post('/api/admin/question-banks', parseJsonBody, async (request, response, next) => {
+  try {
+    await requireTeacher(request, 'canManageQuestionBank');
+    const body = request.body || {};
+    const requestId = typeof body.debugRequestId === 'string' && body.debugRequestId.trim() ? body.debugRequestId.trim() : createDebugRequestId('qb-create');
+    logQuestionBankOp('route:create', { requestId, payload: summarizeQuestionBankPayload(body) });
+    const bank = await createQuestionBank(body, { requestId });
+    sendJson(response, 201, { bank });
+  } catch (err) { next(err); }
+});
+
+// *** bank sub-routes: must come BEFORE /:bankId to avoid shadowing ***
+app.patch('/api/admin/question-banks/:bankId/questions/:questionId', parseJsonBody, async (request, response, next) => {
+  try {
+    await requireTeacher(request, 'canManageQuestionBank');
+    const payload = await updateBankQuestion(request.params.bankId, request.params.questionId, request.body);
+    sendJson(response, 200, payload);
+  } catch (err) { next(err); }
+});
+
+app.delete('/api/admin/question-banks/:bankId/questions/:questionId', async (request, response, next) => {
+  try {
+    await requireTeacher(request, 'canManageQuestionBank');
+    const payload = await deleteBankQuestion(request.params.bankId, request.params.questionId);
+    sendJson(response, 200, payload);
+  } catch (err) { next(err); }
+});
+
+app.get('/api/admin/question-banks/:bankId/questions', async (request, response, next) => {
+  try {
+    await requireTeacher(request, 'canManageQuestionBank');
+    const bank = await getQuestionBankRecord(request.params.bankId);
+    sendJson(response, 200, { bank: { id: bank.id, title: bank.title, description: bank.description, createdAt: bank.createdAt, updatedAt: bank.updatedAt, questionCount: bank.questionCount }, questions: bank.questions });
+  } catch (err) { next(err); }
+});
+
+app.post('/api/admin/question-banks/:bankId/questions', parseJsonBody, async (request, response, next) => {
+  try {
+    await requireTeacher(request, 'canManageQuestionBank');
+    const payload = await addQuestionToBank(request.params.bankId, request.body);
+    sendJson(response, 201, payload);
+  } catch (err) { next(err); }
+});
+
+app.post('/api/admin/question-banks/:bankId/import', parseJsonBody, async (request, response, next) => {
+  try {
+    await requireTeacher(request, 'canManageQuestionBank');
+    const body = request.body || {};
+    const requestId = typeof body.debugRequestId === 'string' && body.debugRequestId.trim() ? body.debugRequestId.trim() : createDebugRequestId('qb-import');
+    logQuestionBankOp('route:import', { requestId, bankId: request.params.bankId, requestedQuestionIds: Array.isArray(body.questionIds) ? body.questionIds : [] });
+    const payload = await importQuestionBankQuestions(request.params.bankId, body, { requestId });
+    sendJson(response, 200, payload);
+  } catch (err) { next(err); }
+});
+
+app.get('/api/admin/question-banks/:bankId', async (request, response, next) => {
+  try {
+    await requireTeacher(request, 'canManageQuestionBank');
+    const bank = await getQuestionBankRecord(request.params.bankId);
+    sendJson(response, 200, { bank });
+  } catch (err) { next(err); }
+});
+
+app.patch('/api/admin/question-banks/:bankId', parseJsonBody, async (request, response, next) => {
+  try {
+    await requireTeacher(request, 'canManageQuestionBank');
+    const body = request.body || {};
+    const requestId = typeof body.debugRequestId === 'string' && body.debugRequestId.trim() ? body.debugRequestId.trim() : createDebugRequestId('qb-update');
+    logQuestionBankOp('route:update', { requestId, bankId: request.params.bankId, expectedUpdatedAt: Number(body.expectedUpdatedAt || 0), payload: summarizeQuestionBankPayload(body) });
+    const bank = await updateQuestionBank(request.params.bankId, body, { requestId });
+    sendJson(response, 200, { bank });
+  } catch (err) { next(err); }
+});
+
+app.delete('/api/admin/question-banks/:bankId', parseJsonBody, async (request, response, next) => {
+  try {
+    await requireTeacher(request, 'canManageQuestionBank');
+    const body = request.body || {};
+    const requestId = typeof body.debugRequestId === 'string' && body.debugRequestId.trim() ? body.debugRequestId.trim() : createDebugRequestId('qb-delete');
+    logQuestionBankOp('route:delete', { requestId, bankId: request.params.bankId });
+    await deleteQuestionBankRecord(request.params.bankId, { requestId });
+    sendJson(response, 200, { success: true });
+  } catch (err) { next(err); }
+});
+
+// ============================================================
+// STUDENT ROUTES
+// ============================================================
+
+app.post('/api/student/exam-access', parseJsonBody, async (request, response, next) => {
+  try {
+    const exam = await resolveExamAccess(request.body);
+    logInfo('Student', 'Exam Access Accepted', { requestId: request.requestId, examId: exam.id });
+    sendJson(response, 200, { exam: sanitizeExamPreview(exam.id, exam) });
+  } catch (err) { next(err); }
+});
+
+app.post('/api/student/exams/:examId/start', parseJsonBody, async (request, response, next) => {
+  try {
+    requireStudent(request);
+    const payload = await startStudentExam(request.params.examId, request.body, request);
+    logAudit('Student', 'Exam Started', { requestId: request.requestId, examId: request.params.examId });
+    sendJson(response, 200, payload);
+  } catch (err) { next(err); }
+});
+
+app.post('/api/student/exams/:examId/submit', parseJsonBody, async (request, response, next) => {
+  try {
+    requireStudent(request);
+    const payload = await submitStudentExam(request.params.examId, request.body, request);
+    logAudit('Student', 'Exam Submitted', { requestId: request.requestId, examId: request.params.examId });
+    sendJson(response, 201, payload);
+  } catch (err) { next(err); }
+});
+
+app.get('/api/student/dashboard', async (request, response, next) => {
+  try {
+    const session = requireStudent(request);
+    const [userSnapshot, historySnapshot] = await Promise.all([
+      database.ref(firebasePath('users', session.uid)).get(),
+      database.ref(firebasePath('studentHistory', session.uid)).get()
+    ]);
+
+    const userData = userSnapshot.val() || {};
+    const history = historySnapshot.exists() ? Object.values(historySnapshot.val()).sort((a, b) => b.at - a.at) : [];
+
+    sendJson(response, 200, {
+      profile: {
+        name: userData.name || session.name,
+        username: userData.username,
+        role: userData.role,
+        createdAt: userData.createdAt
+      },
+      history
+    });
+  } catch (err) { next(err); }
+});
+
+app.get('/api/student/exams/:examId/receipt/:submissionId', async (request, response, next) => {
+  try {
+    const receiptToken = typeof request.query.token === 'string' ? request.query.token : '';
+    const payload = await readStudentReceipt(request.params.examId, request.params.submissionId, receiptToken);
+    sendJson(response, 200, payload);
+  } catch (err) { next(err); }
+});
+
+app.post('/api/student/results/lookup', parseJsonBody, async (request, response, next) => {
+  try {
+    const payload = await lookupPublishedStudentResult(request.body);
+    sendJson(response, 200, payload);
+  } catch (err) { next(err); }
+});
+
+// ============================================================
+// 404 FALLBACK & ERROR HANDLER
+// ============================================================
+
+app.use((request, response) => {
+  sendText(response, 404, 'الصفحة المطلوبة غير موجودة.');
+});
+
+// Express 4-argument error handler
+app.use((error, request, response, next) => { // eslint-disable-line no-unused-vars
+  const status = error.status || 500;
+  const message = status >= 500 ? 'حدث خطأ داخلي في الخادم.' : error.message;
+
+  const errorMeta = {
+    requestId: request.requestId,
+    method: request.method,
+    pathname: request.path,
+    ip: getClientIp(request),
+    status
+  };
+
+  if (status >= 500) {
+    logError('HTTP', 'Server Error', errorMeta, error);
+  } else if (status === 401 || status === 403 || status === 429) {
+    logSecurity('HTTP', 'Security Exception', { ...errorMeta, message });
+  } else {
+    logWarn('HTTP', 'Client Error', { ...errorMeta, message });
+  }
+
+  const extraHeaders = error.retryAfter ? { 'Retry-After': String(error.retryAfter) } : {};
+  sendJson(response, status, { error: message }, extraHeaders);
+});
+
+// ============================================================
+// START SERVER
+// ============================================================
+
+app.listen(PORT, HOST, () => {
   console.log(`Server running at http://localhost:${PORT}`);
   console.log(`Firebase Realtime Database root: ${FIREBASE_ROOT}`);
-
-  if (!process.env.ADMIN_PASSWORD) {
-    console.log('Tip: set ADMIN_PASSWORD in a .env file to override the default server-side password.');
-  }
+  console.log(`Configured admin accounts: ${ADMIN_ACCOUNTS.length}`);
 });

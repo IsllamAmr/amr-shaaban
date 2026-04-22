@@ -13,210 +13,80 @@
   <div class="bg-pattern"></div>
 
   <div class="page active" id="pg-home">
-    <div class="auth-shell auth-shell-home">
-      <div class="auth-stage">
-        <section class="auth-hero">
-          <div class="auth-brand">
-            <div class="brand-eyebrow">منصة تعليمية احترافية</div>
-            <div class="auth-brand-row">
-              <div class="brand-mark">📚</div>
-              <div class="brand-copy">
-                <h1>منصة تعليمية متكاملة لإدارة الامتحانات والطلاب</h1>
-                <p>واجهة موثوقة وحديثة لإدارة الاختبارات الإلكترونية، متابعة النتائج، وتنظيم تجربة الطالب والمعلم من مكان واحد.</p>
-              </div>
-            </div>
+    <div class="auth-shell auth-shell-home minimal-auth-layout">
+      <!-- Right Side: Branding (RTL so it's technically visual right) -->
+      <div class="minimal-auth-branding">
+        <div class="minimal-brand-glass">
+          <div class="branding-eyebrow">منصة تعليمية متطورة ⚡</div>
+          <h1>مرحباً بك في<br>بوابة الاختبارات</h1>
+          <p>أدخل بياناتك بأمان وابدأ تقييمك فوراً. المنصة مسجلة وتعمل بنظام حماية عالي ومراقبة مستمرة للأداء.</p>
+          <div class="branding-stats">
+             <div class="stat-pill">🔒 آمن تماماً</div>
+             <div class="stat-pill">⚡ سريع الاستجابة</div>
+             <div class="stat-pill">📱 متوافق مع الهاتف</div>
           </div>
-
-          <div class="teacher-signature">
-            <div class="teacher-chip">
-              <div class="teacher-avatar">ع</div>
-              <div>
-                <div class="teacher-name">أ/ عمرو شعبان</div>
-                <div class="teacher-role">مدرس اللغة العربية</div>
-              </div>
-            </div>
-            <div class="logo-slot">
-              <span>مساحة جاهزة لإضافة شعار المدرس أو لوجو المنصة لاحقًا</span>
-            </div>
-          </div>
-
-          <div class="hero-feature-grid">
-            <div class="hero-feature-card">
-              <div class="hero-feature-icon">📝</div>
-              <div>
-                <div class="hero-feature-title">اختبارات منظمة</div>
-                <div class="hero-feature-text">إدارة الامتحانات والروابط والوقت من لوحة واحدة.</div>
-              </div>
-            </div>
-            <div class="hero-feature-card">
-              <div class="hero-feature-icon">📊</div>
-              <div>
-                <div class="hero-feature-title">تقارير واضحة</div>
-                <div class="hero-feature-text">نتائج دقيقة وسهلة المتابعة للمدرس والطالب.</div>
-              </div>
-            </div>
-            <div class="hero-feature-card">
-              <div class="hero-feature-icon">🔒</div>
-              <div>
-                <div class="hero-feature-title">دخول آمن</div>
-                <div class="hero-feature-text">التحقق يتم عبر السيرفر مع تجربة استخدام سلسة.</div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section class="auth-panel">
-          <div class="auth-panel-head">
-            <span class="badge badge-gold">بوابة الوصول</span>
-            <h2>اختر نوع الحساب المناسب</h2>
-            <p>ابدأ كطالب للدخول إلى الامتحان، أو انتقل إلى بوابة المدرس لإدارة الامتحانات والنتائج.</p>
-          </div>
-
-          <div class="user-type-grid">
-            <button type="button" class="user-type-card active" onclick="goStudentEntryStep(1)">
-              <span class="user-type-icon">🎓</span>
-              <span class="user-type-title">دخول الطالب</span>
-              <span class="user-type-text">الدخول إلى الامتحان باستخدام البيانات الأساسية وكود الاختبار.</span>
-            </button>
-            <button type="button" class="user-type-card" onclick="goPage('pg-adminlogin')">
-              <span class="user-type-icon">🧑‍🏫</span>
-              <span class="user-type-title">دخول المدرس</span>
-              <span class="user-type-text">إدارة الامتحانات، بنوك الأسئلة، النتائج، ولوحة التحكم الكاملة.</span>
-            </button>
-          </div>
-
-          <div class="auth-form-card auth-form-card-student">
-            <div class="auth-form-head auth-form-head-student">
-              <div>
-                <div class="auth-form-title">ابدأ امتحانك بسهولة</div>
-                <p id="h-subtitle" class="auth-form-subtitle">أدخل كود الامتحان أو افتح الرابط المباشر، ثم انتقل إلى كتابة اسمك فقط قبل بدء الاختبار.</p>
-              </div>
-              <div class="auth-form-badge">Student Access</div>
-            </div>
-
-            <div class="student-stepper" id="h-stepper">
-              <div class="student-step-indicator is-active" data-step="1">
-                <span class="student-step-number">1</span>
-                <div>
-                  <div class="student-step-label">التعرّف على الامتحان</div>
-                  <div class="student-step-caption">تأكيد الكود أو الرابط المباشر</div>
-                </div>
-              </div>
-              <div class="student-step-indicator" data-step="2">
-                <span class="student-step-number">2</span>
-                <div>
-                  <div class="student-step-label">بيانات الطالب</div>
-                  <div class="student-step-caption">اسم الطالب كما هو لدى المدرس</div>
-                </div>
-              </div>
-              <div class="student-step-indicator" data-step="3">
-                <span class="student-step-number">3</span>
-                <div>
-                  <div class="student-step-label">بدء الامتحان</div>
-                  <div class="student-step-caption">دخول مباشر إلى ورقة الأسئلة</div>
-                </div>
-              </div>
-            </div>
-
-            <div class="student-entry-flow">
-              <section class="student-step-panel active" id="h-step-1">
-                <div class="student-step-block">
-                  <div class="student-step-block-head">
-                    <div>
-                      <div class="student-step-block-title">المرحلة الأولى: معاينة الامتحان</div>
-                      <p class="student-step-block-text" id="h-step-1-text">تعرّف على بيانات الامتحان أولًا، ثم انتقل إلى كتابة اسمك قبل البدء.</p>
-                    </div>
-                    <div class="student-step-icon">🧾</div>
-                  </div>
-
-                  <div class="inp-wrap" id="h-code-wrap">
-                    <label class="label">🔑 كود الامتحان</label>
-                    <input class="inp inp-premium" id="h-code" placeholder="مثال: AR001" style="text-transform:uppercase;letter-spacing:2px">
-                    <div class="student-field-tip">أدخل الكود الذي أرسله المدرس لك، ثم اضغط متابعة لإظهار بطاقة الامتحان.</div>
-                  </div>
-
-                  <div class="linked-exam-card exam-preview-card" id="h-linked-card" style="display:none">
-                    <div class="exam-preview-head">
-                      <div>
-                        <div class="exam-preview-eyebrow">بطاقة الامتحان</div>
-                        <div class="exam-preview-title" id="h-linked-title">عنوان الامتحان</div>
-                        <div class="exam-preview-description" id="h-linked-meta"></div>
-                      </div>
-                      <div class="exam-preview-logo" id="h-linked-logo">ع</div>
-                    </div>
-
-                    <div class="exam-preview-grid">
-                      <div class="exam-preview-stat">
-                        <span class="exam-preview-label">عدد الأسئلة</span>
-                        <strong class="exam-preview-value" id="h-linked-questions">0 سؤال</strong>
-                      </div>
-                      <div class="exam-preview-stat">
-                        <span class="exam-preview-label">الوقت</span>
-                        <strong class="exam-preview-value" id="h-linked-duration">0 دقيقة</strong>
-                      </div>
-                      <div class="exam-preview-stat">
-                        <span class="exam-preview-label">الحالة</span>
-                        <strong class="exam-preview-value" id="h-linked-status">—</strong>
-                      </div>
-                    </div>
-
-                    <div class="exam-preview-inline">
-                      <span class="exam-preview-inline-chip" id="h-linked-teacher">أ/ عمرو شعبان</span>
-                      <span class="exam-preview-inline-chip" id="h-linked-link"></span>
-                    </div>
-
-                    <button type="button" class="text-link-btn student-change-link" id="h-change-exam-btn" onclick="resetStudentExamSelection()" style="display:none">تغيير كود الامتحان</button>
-                  </div>
-
-                  <div class="auth-actions">
-                    <button class="btn btn-green btn-full btn-lg" id="h-continue-btn" onclick="continueStudentEntry()">متابعة ←</button>
-                  </div>
-                </div>
-              </section>
-
-              <section class="student-step-panel" id="h-step-2" hidden>
-                <div class="student-step-block">
-                  <div class="student-step-block-head">
-                    <div>
-                      <div class="student-step-block-title">المرحلة الثانية: بيانات الطالب</div>
-                      <p class="student-step-block-text">اكتب اسمك كما هو مسجل لدى المدرس، ثم ابدأ الامتحان فورًا.</p>
-                    </div>
-                    <div class="student-step-icon">🎓</div>
-                  </div>
-
-                  <div class="student-selected-exam-mini" id="h-selected-exam-mini"></div>
-
-                  <div class="inp-wrap">
-                    <label class="label">👤 اسم الطالب كاملًا</label>
-                    <input class="inp inp-premium" id="h-name" placeholder="مثال: محمد أحمد عبدالله">
-                    <div class="student-field-tip">اكتب اسمك الحقيقي بالكامل حتى تظهر نتيجتك بشكل صحيح لدى المدرس.</div>
-                  </div>
-
-                  <input id="h-group" type="hidden" value="">
-
-                  <div class="student-step-actions">
-                    <button class="btn btn-outline btn-lg btn-soft" type="button" onclick="goStudentEntryStep(1)">← رجوع</button>
-                    <button class="btn btn-green btn-lg student-start-btn" id="h-enter-btn" onclick="homeEnter()">ابدأ الامتحان</button>
-                  </div>
-                </div>
-              </section>
-            </div>
-
-            <div id="h-err" class="err auth-message" style="display:none"></div>
-
-            <div class="auth-actions student-secondary-actions">
-              <button class="btn btn-outline btn-full btn-lg btn-soft" onclick="goPage('pg-resultlookup')">📊 عرض النتيجة لاحقًا</button>
-            </div>
-
-            <div class="auth-footer-link">
-              <button class="text-link-btn" onclick="goPage('pg-adminlogin')">🔐 الانتقال إلى بوابة المدرس</button>
-            </div>
-          </div>
-        </section>
+        </div>
       </div>
+      
+      <!-- Left Side: Form -->
+      <div class="minimal-auth-card-wrapper">
+        <div class="minimal-auth-card">
+        
+        <div class="minimal-auth-header">
+          <div class="minimal-auth-logo">🎓</div>
+          <h1 class="minimal-auth-title">ابدأ الامتحان</h1>
+          <p class="minimal-auth-subtitle" id="h-subtitle">أدخل كود الامتحان واسمك للمتابعة</p>
+        </div>
 
-      <div class="auth-bottom-note">
-        © منصة أ / عمرو شعبان التعليمية — تجربة تعليمية احترافية مصممة لسهولة الإدارة وثقة المستخدم
+        <div id="h-stepper" style="display:none">
+          <div class="student-step-indicator" data-step="1"></div>
+          <div class="student-step-indicator" data-step="2"></div>
+        </div>
+
+        <div class="student-entry-flow minimal-auth-body">
+          <section class="student-step-panel active" id="h-step-1">
+            <div class="inp-wrap" id="h-code-wrap" style="margin-bottom:16px;">
+              <input class="inp inp-premium minimal-inp" id="h-code" placeholder="أدخل كود الامتحان" style="text-transform:uppercase;letter-spacing:2px;text-align:center;">
+            </div>
+            <p id="h-step-1-text" style="display:none"></p>
+            
+            <div class="linked-exam-card exam-preview-card minimal-preview" id="h-linked-card" style="display:none; text-align:center; padding:16px; margin-bottom:16px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:18px;">
+              <div id="h-linked-title" style="font-weight:900; font-size:18px; color:#0f172a; margin-bottom:6px;"></div>
+              <div style="font-size:14px; font-weight:700; color:#475569;">
+                <span id="h-linked-questions"></span> • <span id="h-linked-duration"></span> • <span id="h-linked-status"></span>
+              </div>
+              <div id="h-linked-meta" style="display:none;"></div>
+              <div id="h-linked-teacher" style="display:none;"></div>
+              <div id="h-linked-link" style="display:none;"></div>
+              <div id="h-linked-logo" style="display:none;"></div>
+              <button type="button" class="text-link-btn" id="h-change-exam-btn" onclick="resetStudentExamSelection()" style="display:none; font-size:13px; font-weight:800; margin-top:12px;">تغيير الكود</button>
+            </div>
+
+            <button class="btn btn-gold btn-full btn-lg minimal-btn" id="h-continue-btn" onclick="continueStudentEntry()">متابعة ←</button>
+          </section>
+
+          <section class="student-step-panel" id="h-step-2" hidden>
+            <div id="h-selected-exam-mini" style="display:none;"></div>
+            <div class="inp-wrap" style="margin-bottom:16px;">
+              <input class="inp inp-premium minimal-inp" id="h-name" placeholder="الاسم ثلاثياً لتسجيل النتيجة" style="text-align:center;">
+              <input id="h-group" type="hidden" value="">
+            </div>
+            <div style="display:flex; gap:12px;">
+              <button class="btn btn-outline minimal-btn" style="padding:0 24px;" type="button" onclick="goStudentEntryStep(1)">رجوع</button>
+              <button class="btn btn-green btn-lg minimal-btn" style="flex:1;" id="h-enter-btn" onclick="homeEnter()">ابدأ الامتحان</button>
+            </div>
+          </section>
+        </div>
+
+          </div>
+        <div id="h-err" class="err auth-message minimal-err" style="display:none; margin-top:16px; margin-bottom:0;"></div>
+
+        <div class="minimal-auth-footer">
+          <button class="text-link-btn" onclick="goPage('pg-resultlookup')">عرض نتيجة سابقة</button>
+          <span style="color:#cbd5e1; margin:0 8px;">•</span>
+          <button class="text-link-btn" onclick="goPage('pg-adminlogin')">بوابة المدرس</button>
+        </div>
+
       </div>
     </div>
   </div>
@@ -263,9 +133,9 @@
 
         <section class="auth-panel auth-panel-admin">
           <div class="auth-panel-head">
-            <div class="badge badge-gold" id="al-mode-tag" style="margin-bottom:14px">دخول كلمة المرور</div>
+            <div class="badge badge-gold" id="al-mode-tag" style="margin-bottom:14px">دخول الأدمن</div>
             <h2 id="al-title">دخول المدرس</h2>
-            <p id="al-helper">أدخل كلمة المرور للدخول إلى لوحة التحكم.</p>
+            <p id="al-helper">أدخل اسم المستخدم وكلمة المرور للدخول إلى لوحة التحكم.</p>
           </div>
 
           <div class="user-type-grid user-type-grid-compact">
@@ -290,18 +160,18 @@
               <div class="auth-form-badge">Teacher Access</div>
             </div>
 
-            <div class="inp-wrap" id="al-email-wrap" style="display:none">
-              <label class="label">البريد الإلكتروني</label>
-              <input class="inp inp-premium" type="email" id="al-email" placeholder="teacher@example.com">
+            <div class="inp-wrap" id="al-user-wrap">
+              <label class="label">👤 اسم المستخدم</label>
+              <input class="inp inp-premium" type="text" id="al-user" placeholder="مثال: admin" autocomplete="username">
             </div>
 
             <div class="inp-wrap">
               <label class="label">🔑 كلمة المرور</label>
-              <input class="inp inp-premium" type="password" id="al-pass" placeholder="أدخل كلمة المرور">
+              <input class="inp inp-premium" type="password" id="al-pass" placeholder="أدخل كلمة المرور" autocomplete="current-password">
             </div>
 
             <div class="form-inline-note">
-              يتم التحقق من جلسة المدرس عبر الخادم قبل فتح لوحة التحكم لضمان أمان أعلى.
+              يتم التحقق من حساب الأدمن عبر الخادم قبل فتح لوحة التحكم لضمان أمان أعلى.
             </div>
 
             <div id="al-err" class="err auth-message" style="display:none"></div>
@@ -645,6 +515,11 @@
   </div>
 
   <script src="app-config.js"></script>
-  <script src="script.js"></script>
+  <script src="js/app-state.js"></script>
+  <script src="js/utils.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/ui-helpers.js"></script>
+  <script src="js/admin.js"></script>
+  <script src="js/exam.js"></script>
 </body>
 </html>

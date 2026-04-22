@@ -6,3 +6,5 @@ firebase-service-account.json
 firebase-service-account.json.json
 serviceAccountKey.json
 *.log
+*.md
+!README.md

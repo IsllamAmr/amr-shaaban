@@ -4,25 +4,19 @@
   },
   "hosting": {
     "target": "default",
-    "public": ".",
+    "public": "public",
     "cleanUrls": true,
     "ignore": [
       "firebase.json",
       ".firebaserc",
-      "database.rules.json",
       "**/.*",
-      "**/node_modules/**",
-      "data/**",
-      "firebase-hosting-public/**",
-      "server.js",
-      "Dockerfile",
-      ".dockerignore",
-      "DEPLOY.md",
-      "package.json",
-      "package-lock.json",
-      "firebase-service-account.json",
-      "firebase-service-account.json.json",
-      "serviceAccountKey.json"
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
     ]
   }
 }

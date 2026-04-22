@@ -1,0 +1,21 @@
+/**
+ * =========================================================================
+ * 🚨 NOTICE: THIS FILE HAS BEEN DEPRECATED AND MODULARIZED 🚨
+ * =========================================================================
+ * 
+ * The monolithic script.js (3700+ lines) has been successfully refactored
+ * into a modular structure to improve maintainability, performance, and
+ * team collaboration.
+ * 
+ * The new frontend architecture is located in the `js/` directory:
+ * 
+ * 1. js/app-state.js   --> Global variables and configuration.
+ * 2. js/utils.js       --> Helper functions and formatting.
+ * 3. js/api.js         --> Fetch wrapper and server communication.
+ * 4. js/ui-helpers.js  --> Charts, Printing, Auth visuals, and Anti-cheat.
+ * 5. js/admin.js       --> Dashboard, Exams management, Banks, and Results.
+ * 6. js/exam.js        --> Student exam flow, Timer, Submissions.
+ * 
+ * Do NOT add new code here. Please use the appropriate module in `js/`.
+ * =========================================================================
+ */
