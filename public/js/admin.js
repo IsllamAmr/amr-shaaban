@@ -105,6 +105,65 @@ function buildSubmissionList(submissionMap, correctAnswers, total) {
   }).sort((a, b) => Number(b.at || 0) - Number(a.at || 0));
 }
 
+async function loadAdminDashboard() {
+  try {
+    await ensureAdminAccess();
+    const data = await requestServerJson("/api/admin/dashboard", { method: "GET" });
+    exams = (data.exams || []).map((exam) => ({ ...exam, questions: normalizeQuestions(exam.questions) }));
+    renderDash({
+      summary: data.summary || { examCount: exams.length, studentCount: 0, averageScore: 0 },
+      exams,
+      chartsHtml: buildDashboardCharts(exams, data.allResults || [])
+    });
+    return true;
+  } catch (error) {
+    const message = mapFirebaseError(error, "تعذر تحميل لوحة التحكم.");
+    if (message.includes("سجّل دخول")) { showErr(document.getElementById("al-err"), message); showPage("pg-adminlogin"); return false; }
+    alert(message);
+    return false;
+  }
+}
+
+function renderDash(data) {
+  document.getElementById("ad-stats").innerHTML = `
+    <div class="stat-card"><div class="stat-num">${data.summary.examCount}</div><div class="stat-lbl">الامتحانات</div></div>
+    <div class="stat-card"><div class="stat-num">${data.summary.studentCount}</div><div class="stat-lbl">التسليمات</div></div>
+    <div class="stat-card"><div class="stat-num">${data.summary.averageScore}%</div><div class="stat-lbl">متوسط الدرجات</div></div>
+  `;
+  document.getElementById("ad-charts").innerHTML = data.chartsHtml;
+  const container = document.getElementById("ad-exams");
+  if (!data.exams.length) {
+    container.innerHTML = `<div class="empty-state">لا توجد امتحانات بعد<br><span>ابدأ بإنشاء أول امتحان الآن.</span></div>`;
+    return;
+  }
+  container.innerHTML = data.exams.map((exam) => `
+    <div class="exam-card">
+      <div class="flex-between" style="margin-bottom:14px">
+        <div>
+          <div style="font-size:17px;font-weight:800;color:var(--td);margin-bottom:6px">${escapeHtml(exam.title)}</div>
+          <div style="font-size:13px;color:var(--tm);display:flex;gap:12px;flex-wrap:wrap">
+            <span class="badge badge-gold">${escapeHtml(exam.code)}</span>
+            <span>⏱ ${exam.duration} دقيقة</span>
+            <span>❓ ${exam.questionCount} سؤال</span>
+            <span>📨 ${exam.resultCount} تسليم</span>
+            ${exam.resultCount ? `<span>📊 متوسط ${exam.averageScore}%</span>` : ""}
+          </div>
+        </div>
+        <span class="badge ${exam.active ? "badge-green" : "badge-red"}" style="white-space:nowrap">${exam.active ? "✅ متاح" : "⛔ مغلق"}</span>
+      </div>
+      <div class="divider"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-sm ${exam.active ? "btn-red" : "btn-green"}" onclick="toggleExam('${exam.id}')">${exam.active ? "⛔ إغلاق" : "✅ فتح"}</button>
+        <button class="btn btn-sm btn-outline" onclick="copyExamLink('${exam.id}')">🔗 نسخ الرابط</button>
+        <button class="btn btn-sm btn-gold" onclick="viewResults('${exam.id}')">📊 النتائج (${exam.resultCount})</button>
+        <button class="btn btn-sm btn-outline" onclick="deleteExam('${exam.id}')">🗑 حذف الامتحان</button>
+      </div>
+    </div>
+  `).join("");
+}
+
+window.loadAdminDashboard = loadAdminDashboard;
+
 let teachersState = [];
 let currentEditingTeacherId = null;
 
