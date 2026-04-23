@@ -66,12 +66,18 @@ const FIREBASE_DATABASE_URL = process.env.FIREBASE_DATABASE_URL;
 const FIREBASE_SERVICE_ACCOUNT_PATH = process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
 const FIREBASE_ROOT = (process.env.FIREBASE_ROOT || 'examPlatform').replace(/^\/+|\/+$/g, '');
 const FIREBASE_STORAGE_BUCKET = String(process.env.FIREBASE_STORAGE_BUCKET || '').trim();
+const DEFAULT_ALLOWED_ORIGINS = [
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'https://amr-shaaban.web.app',
+  'https://amr-shaaban.firebaseapp.com',
+  'https://amr-shaaban.onrender.com'
+];
 const ALLOWED_ORIGINS = new Set(
-  String(
-    process.env.ALLOWED_ORIGINS
-    || 'http://localhost:3000,http://127.0.0.1:3000,https://amr-shaaban.web.app,https://amr-shaaban.firebaseapp.com'
-  )
-    .split(',')
+  [
+    ...DEFAULT_ALLOWED_ORIGINS,
+    ...String(process.env.ALLOWED_ORIGINS || '').split(',')
+  ]
     .map((origin) => normalizeOrigin(origin))
     .filter(Boolean)
 );
@@ -613,34 +619,42 @@ function applyCorsHeaders(request, response) {
   response.setHeader('Access-Control-Allow-Origin', allowedOrigin);
   response.setHeader('Access-Control-Allow-Credentials', 'true');
   response.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
-  response.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Upload-Filename, X-Upload-Content-Type');
+  response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Upload-Filename, X-Upload-Content-Type');
   response.setHeader('Access-Control-Max-Age', '86400');
   appendVaryHeader(response, 'Origin');
   return true;
 }
 
-function getSessionCookiePolicy(request) {
+function isCrossOriginBrowserRequest(request) {
   const requestOrigin = getRequestOrigin(request);
   const browserOrigin = getAllowedRequestOrigin(request);
-  const isCrossOrigin = Boolean(browserOrigin && requestOrigin && browserOrigin !== requestOrigin);
+
+  return Boolean(browserOrigin && requestOrigin && browserOrigin !== requestOrigin);
+}
+
+function getSessionCookiePolicy(request) {
+  const isCrossOrigin = isCrossOriginBrowserRequest(request);
   const isSecure = getRequestProtocol(request) === 'https';
 
   return {
     sameSite: isCrossOrigin ? 'None' : 'Lax',
-    secure: isCrossOrigin || isSecure
+    secure: isCrossOrigin || isSecure,
+    partitioned: isCrossOrigin
   };
 }
 
 function createSessionCookie(request, value) {
   const cookiePolicy = getSessionCookiePolicy(request);
   const securePart = cookiePolicy.secure ? '; Secure' : '';
-  return `${SESSION_COOKIE}=${encodeURIComponent(value)}; HttpOnly; SameSite=${cookiePolicy.sameSite}; Path=/; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}${securePart}`;
+  const partitionedPart = cookiePolicy.partitioned ? '; Partitioned' : '';
+  return `${SESSION_COOKIE}=${encodeURIComponent(value)}; HttpOnly; SameSite=${cookiePolicy.sameSite}; Path=/; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}${securePart}${partitionedPart}`;
 }
 
 function clearSessionCookie(request) {
   const cookiePolicy = getSessionCookiePolicy(request);
   const securePart = cookiePolicy.secure ? '; Secure' : '';
-  return `${SESSION_COOKIE}=; HttpOnly; SameSite=${cookiePolicy.sameSite}; Path=/; Max-Age=0${securePart}`;
+  const partitionedPart = cookiePolicy.partitioned ? '; Partitioned' : '';
+  return `${SESSION_COOKIE}=; HttpOnly; SameSite=${cookiePolicy.sameSite}; Path=/; Max-Age=0${securePart}${partitionedPart}`;
 }
 
 function firebasePath(...segments) {

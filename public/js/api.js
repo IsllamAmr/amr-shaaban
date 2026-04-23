@@ -9,8 +9,7 @@ function buildApiUrl(url) {
 }
 
 function getApiRequestCredentials(url) {
-  const targetUrl = new URL(buildApiUrl(url), window.location.origin);
-  return targetUrl.origin === window.location.origin ? "same-origin" : "include";
+  return "include";
 }
 
 async function requestServerJson(url, options = {}) {
@@ -21,9 +20,9 @@ async function requestServerJson(url, options = {}) {
   }
 
   const response = await fetch(buildApiUrl(url), {
+    ...options,
     credentials: getApiRequestCredentials(url),
     headers,
-    ...options
   });
 
   const isJson = response.headers.get("content-type")?.includes("application/json");
