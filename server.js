@@ -2649,7 +2649,8 @@ const studentSubmitLimiter = rateLimit({
   message: { error: 'محاولات تسليم كثيرة جداً، يرجى المحاولة لاحقاً.' }
 });
 
-app.use('/api/admin/login', loginLimiter);
+app.use('/api/auth/login', loginLimiter);  // Fix: was incorrectly /api/admin/login
+app.use('/api/admin/login', loginLimiter);  // Legacy compat shim
 app.use('/api/admin/uploads', uploadLimiter);
 app.use('/api/student/exam-access', studentAccessLimiter);
 app.use('/api/student/exams/:examId/start', studentAccessLimiter);
@@ -3333,18 +3334,28 @@ app.post('/api/student/exam-access', parseJsonBody, async (request, response, ne
 
 app.post('/api/student/exams/:examId/start', parseJsonBody, async (request, response, next) => {
   try {
-    requireStudent(request);
+    // Allow both authenticated students AND guest flow
+    // If session exists and is a student, use it; otherwise proceed as guest
+    const session = readSessionFromRequest(request);
+    if (session && !['student'].includes(session.role)) {
+      // Teachers/admins cannot take exams
+      throw createHttpError(403, 'لا يمكن للمدرس أو المسؤول بدء اختبار كطالب.');
+    }
     const payload = await startStudentExam(request.params.examId, request.body, request);
-    logAudit('Student', 'Exam Started', { requestId: request.requestId, examId: request.params.examId });
+    logAudit('Student', 'Exam Started', { requestId: request.requestId, examId: request.params.examId, authenticated: Boolean(session) });
     sendJson(response, 200, payload);
   } catch (err) { next(err); }
 });
 
 app.post('/api/student/exams/:examId/submit', parseJsonBody, async (request, response, next) => {
   try {
-    requireStudent(request);
+    // Allow both authenticated students AND guest flow (consistent with start)
+    const session = readSessionFromRequest(request);
+    if (session && !['student'].includes(session.role)) {
+      throw createHttpError(403, 'لا يمكن للمدرس أو المسؤول تسليم اختبار كطالب.');
+    }
     const payload = await submitStudentExam(request.params.examId, request.body, request);
-    logAudit('Student', 'Exam Submitted', { requestId: request.requestId, examId: request.params.examId });
+    logAudit('Student', 'Exam Submitted', { requestId: request.requestId, examId: request.params.examId, authenticated: Boolean(session) });
     sendJson(response, 201, payload);
   } catch (err) { next(err); }
 });

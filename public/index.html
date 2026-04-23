@@ -220,7 +220,7 @@
                 
                 <div id="h-step-1" class="student-step-panel">
                   <div class="inp-wrap">
-                    <label class="label">البريد الإلكتروني أو المعرف/label>
+                    <label class="label">البريد الإلكتروني أو المعرف</label>
                     <div style="position:relative">
                       <input class="inp" id="h-student-id" placeholder="example@rakiz.com" style="padding-right:52px; direction:ltr; text-align:left">
                       <span style="position:absolute; right:18px; top:50%; transform:translateY(-50%); font-size:20px; opacity:0.5">👤</span>
@@ -307,7 +307,7 @@
               <div class="glass-card">
                 <div style="text-align:center; margin-bottom:40px">
                   <h2 class="access-title">دخول المعلم</h2>
-                  <p class="access-subtitle">أدخل بياناتك للوصول إلى أدواتك التعليمية</p>
+                  <p class="access-subtitle">هذه البوابة مخصصة للمعلمين فقط لإدارة الاختبارات والطلاب</p>
                 </div>
                 <div class="inp-wrap"><label class="label">اسم المستخدم</label>
                   <div style="position:relative">
@@ -345,8 +345,8 @@
               <div class="glass-card admin-glass-card">
                 <div style="text-align:center; margin-bottom:48px">
                   <div style="width:80px; height:80px; background:var(--gl); color:var(--wh); border-radius:24px; display:inline-flex; align-items:center; justify-content:center; font-size:40px; margin-bottom:24px">🔐</div>
-                  <h2 class="access-title admin-access-title">إثبات الهوية</h2>
-                  <p class="access-subtitle admin-access-subtitle">أدخل مفتاح المسؤول للوصول للصلاحيات</p>
+                  <h2 class="access-title admin-access-title">إثبات هوية المدير العام</h2>
+                  <p class="access-subtitle admin-access-subtitle">هذه البوابة مخصصة للإدارة العليا فقط للتحكم الكامل في النظام</p>
                 </div>
                 <div class="inp-wrap"><label class="label admin-label">معرف المسؤول</label>
                   <div style="position:relative">
@@ -446,8 +446,20 @@
               <div id="qb-list"></div>
             </div>
             <div class="card">
-              <div class="flex-between" style="margin-bottom:32px"><h2 id="qb-editor-title">مخزن جديد</h2><div class="flex" style="gap:12px"><button class="btn btn-sm btn-red" id="qb-delete-btn" style="display:none" onclick="deleteQuestionBank()">حذف</button><button class="btn btn-sm btn-green" onclick="saveQuestionBank()">حفظ المخزن</button></div></div>
+              <div class="flex-between" style="margin-bottom:8px">
+                <div>
+                  <h2 id="qb-editor-title">مخزن جديد</h2>
+                  <div id="qb-editor-subtitle" style="font-size:13px; color:var(--tm); margin-top:4px">اكتب اسم البنك ثم أضف إليه الأسئلة</div>
+                </div>
+                <div class="flex" style="gap:12px">
+                  <button class="btn btn-sm btn-red" id="qb-delete-btn" style="display:none" onclick="deleteQuestionBank()">حذف</button>
+                  <button class="btn btn-sm btn-green" id="qb-save-btn" onclick="saveQuestionBank()">حفظ المخزن</button>
+                </div>
+              </div>
+              <div id="qb-note" class="err" style="display:none; background:rgba(46,74,54,0.08); color:var(--gd); border:1.5px solid var(--gl); margin-bottom:16px"></div>
+              <div id="qb-err" class="err" style="display:none; margin-bottom:16px"></div>
               <div class="inp-wrap"><label class="label">اسم المخزن</label><input class="inp" id="qb-name" placeholder="مثال: أسئلة النحو - الصف الثالث"></div>
+              <div class="inp-wrap"><label class="label">الوصف (اختياري)</label><textarea class="inp" id="qb-description" rows="2" placeholder="وصف مختصر لهذا المخزن..."></textarea></div>
               <div id="qb-questions"></div>
               <div class="flex-center" style="gap:16px; margin-top:32px"><button class="btn btn-sm btn-outline" onclick="addBankQuestion('mcq')">+ متعدد</button><button class="btn btn-sm btn-outline" onclick="addBankQuestion('tf')">+ صح/خطأ</button></div>
             </div>
@@ -494,7 +506,14 @@
       <!-- pg-exam -->
       <div class="page no-sel" id="pg-exam">
         <div class="exam-header flex-between">
-          <div><h2 class="exam-header-title" id="ex-title">عنوان الاختبار</h2><div class="exam-header-student" id="ex-student">اسم الطالب</div></div>
+          <div>
+            <h2 class="exam-header-title" id="ex-title">عنوان الاختبار</h2>
+            <div class="exam-header-student" id="ex-student">اسم الطالب</div>
+            <!-- Progress bar for answered questions -->
+            <div style="margin-top:8px; height:4px; background:rgba(255,255,255,0.15); border-radius:4px; min-width:200px">
+              <div id="ex-progressbar" style="height:100%; background:var(--gm); border-radius:4px; width:0%; transition:width 0.3s"></div>
+            </div>
+          </div>
           <div class="floating-timer">
             <div class="timer-val" id="ex-timer">00:00</div><div class="timer-label">الوقت المتبقي</div>
             <div class="timer-bar"><div class="timer-fill" id="ex-timerbar" style="width:100%"></div></div>
@@ -677,7 +696,7 @@
 
   <div class="modal-overlay" id="reset-pass-modal" style="display:none">
     <div class="modal">
-      <h2>إعادة تعيين كلمة المرور</h2>
+      <h2>إعادة تعيين كلمة مرور الطالب</h2>
       <p style="margin:16px 0; color:var(--tm)">سيتم تغيير كلمة المرور للطالب: <strong id="rp-student-name"></strong></p>
       <div class="inp-wrap">
         <label class="label">كلمة المرور الجديدة</label>
@@ -687,6 +706,23 @@
       <div class="grid2">
         <button class="btn btn-outline" onclick="document.getElementById('reset-pass-modal').style.display='none'">إلغاء</button>
         <button class="btn btn-green" onclick="confirmResetPassword()">تغيير الآن</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Teacher Password Reset Modal -->
+  <div class="modal-overlay" id="reset-teacher-pass-modal" style="display:none">
+    <div class="modal">
+      <h2>إعادة تعيين كلمة مرور المدرس</h2>
+      <p style="margin:16px 0; color:var(--tm)">سيتم تغيير كلمة المرور للمدرس: <strong id="rtp-teacher-name"></strong></p>
+      <div class="inp-wrap">
+        <label class="label">كلمة المرور الجديدة (8 أحرف على الأقل)</label>
+        <input class="inp" type="password" id="rtp-new-pass" placeholder="••••••••">
+      </div>
+      <div id="rtp-err" class="err" style="display:none; margin-bottom:24px"></div>
+      <div class="grid2">
+        <button class="btn btn-outline" onclick="document.getElementById('reset-teacher-pass-modal').style.display='none'">إلغاء</button>
+        <button class="btn btn-green" onclick="confirmResetTeacherPassword()">تغيير الآن</button>
       </div>
     </div>
   </div>

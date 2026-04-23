@@ -68,7 +68,7 @@ async function syncSession(options = {}) {
     currentRole = session.role;
     
     // Legacy support for admin logic
-    isAdminAuthenticated = session.role === 'admin' || session.role === 'teacher';
+    isAdminAuthenticated = ['admin', 'super_admin', 'teacher'].includes(session.role);
     adminUid = session.uid;
     
     if (typeof updateAdminLoginView === 'function') updateAdminLoginView();
@@ -92,7 +92,7 @@ async function syncAdminSession(options = {}) {
 }
 
 async function ensureRoleAccess(role) {
-  if (!isUserAuthenticated || (role && currentRole !== role && currentRole !== 'admin')) {
+  if (!isUserAuthenticated || (role && currentRole !== role && currentRole !== 'admin' && currentRole !== 'super_admin')) {
     throw new Error("يجب تسجيل الدخول للوصول.");
   }
 }

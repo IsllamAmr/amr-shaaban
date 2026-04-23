@@ -49,10 +49,25 @@ async function performRoleLogin(prefix) {
 
   setButtonLoading(actionButton, true, "جارٍ التحقق...");
   try {
-    await requestServerJson("/api/auth/login", {
+    const res = await requestServerJson("/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ username, password })
     });
+
+    // Enforce role separation
+    if (prefix === 'al') {
+      // Super Admin Login Portal
+      if (res.role !== 'super_admin') {
+        await requestServerJson("/api/auth/logout", { method: "POST" });
+        throw new Error("هذا الدخول مخصص للإدارة العليا فقط.");
+      }
+    } else if (prefix === 'tl') {
+      // Teacher Login Portal
+      if (res.role !== 'teacher' && res.role !== 'super_admin' && res.role !== 'admin') {
+        await requestServerJson("/api/auth/logout", { method: "POST" });
+        throw new Error("هذا الدخول مخصص للمعلمين فقط.");
+      }
+    }
 
     // Sync shared session state
     await syncSession();
@@ -479,7 +494,13 @@ async function initCreateExam() {
 }
 
 function addQuestion(type) {
-  const question = createEmptyQuestion(type, createQuestionId);
+  const question = createEmptyQuestion();
+  question.type = type || 'mcq';
+  // For T/F questions, set only 2 options
+  if (type === 'tf') {
+    question.options = ['\u0635\u062d', '\u062e\u0637\u0623'];
+    question.correct = -1;
+  }
   questions.push(question);
   renderQuestions();
   setTimeout(() => { const field = document.getElementById(`qt-${question.id}`); if (field) field.focus(); }, 100);
@@ -716,7 +737,13 @@ function renderBankList() {
 }
 
 function addBankQuestion(type) {
-  const question = createEmptyQuestion(type, createBankQuestionId);
+  const question = createEmptyQuestion();
+  question.type = type || 'mcq';
+  if (type === 'tf') {
+    question.options = ['\u0635\u062d', '\u062e\u0637\u0623'];
+    question.correct = -1;
+  }
+  question.id = 'bq' + (++bankQuestionCounter);
   bankQuestions.push(question);
   renderBankQuestions();
   setTimeout(() => { const field = document.getElementById(`bqt-${question.id}`); if (field) field.focus(); }, 100);
