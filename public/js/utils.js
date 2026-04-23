@@ -209,6 +209,7 @@ function mapFirebaseError(error, fallback = "حدث خطأ غير متوقع.") 
   const code = String(error?.code || "").toLowerCase();
   const message = String(error?.message || "").toLowerCase();
   if (code.includes("network") || message.includes("network") || message.includes("fetch")) return "تعذر الاتصال بالخادم. تأكد من الاتصال بالإنترنت.";
+  if ((error?.status === 401 || error?.status === 403) && error?.message) return error.message;
   if (code.includes("permission") || message.includes("permission") || message.includes("unauthorized") || error?.status === 401 || error?.status === 403) return "ليس لديك صلاحية لهذه العملية.";
   if (code.includes("not-found") || message.includes("not found") || error?.status === 404) return fallback;
   if (error?.message) return error.message;

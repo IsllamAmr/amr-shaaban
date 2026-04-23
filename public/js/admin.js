@@ -7,23 +7,49 @@
 
 function updateAdminLoginView() {
   const sidebar = document.getElementById("admin-sidebar");
-  const teacherLink = document.getElementById("nav-teachers");
-  if (!isUserAuthenticated) {
+  const navVisibility = {
+    "nav-dash": currentRole === "teacher",
+    "nav-students": currentRole === "teacher",
+    "nav-create": currentRole === "teacher",
+    "nav-banks": currentRole === "teacher",
+    "nav-results": currentRole === "teacher",
+    "nav-teachers": currentRole === "super_admin",
+    "nav-settings": currentRole === "teacher"
+  };
+
+  if (!isUserAuthenticated || !["teacher", "super_admin"].includes(currentRole)) {
     if (sidebar) sidebar.style.display = "none";
     return;
   }
-  
-  if (teacherLink) {
-    teacherLink.style.display = currentRole === 'super_admin' ? 'block' : 'none';
+
+  Object.entries(navVisibility).forEach(([id, shouldShow]) => {
+    const link = document.getElementById(id);
+    if (link) link.style.display = shouldShow ? "block" : "none";
+  });
+}
+
+async function ensureTeacherPortalAccess() {
+  if (isUserAuthenticated && currentRole === "teacher") return;
+  const session = await syncSession();
+  if (session.authenticated && session.role === "teacher") return;
+  if (session.authenticated && session.role === "super_admin") {
+    const error = new Error("هذه البوابة مخصصة للمعلمين فقط.");
+    error.redirectTo = "pg-admin-teachers";
+    throw error;
   }
+  if (session.authenticated) throw new Error("هذه البوابة مخصصة للمعلمين فقط.");
+  throw new Error("يجب تسجيل الدخول أولاً.");
+}
+
+async function ensureSuperAdminPortalAccess() {
+  if (isUserAuthenticated && currentRole === "super_admin") return;
+  const session = await syncSession();
+  if (session.authenticated && session.role === "super_admin") return;
+  throw new Error("هذه البوابة مخصصة للإدارة العليا فقط");
 }
 
 async function ensureAdminAccess() {
-  if (isUserAuthenticated && (currentRole === 'admin' || currentRole === 'super_admin' || currentRole === 'teacher')) return;
-  const session = await syncSession();
-  if (session.authenticated && ['admin', 'super_admin', 'teacher'].includes(session.role)) return;
-  if (session.authenticated) throw new Error("Access denied.");
-  if (!session.authenticated) throw new Error("يجب تسجيل الدخول أولاً.");
+  await ensureTeacherPortalAccess();
 }
 
 async function refreshAdminMode() {
@@ -59,13 +85,13 @@ async function performRoleLogin(prefix) {
       // Super Admin Login Portal
       if (res.role !== 'super_admin') {
         await requestServerJson("/api/auth/logout", { method: "POST" });
-        throw new Error("هذا الدخول مخصص للإدارة العليا فقط.");
+        throw new Error("هذه البوابة مخصصة للإدارة العليا فقط");
       }
     } else if (prefix === 'tl') {
       // Teacher Login Portal
-      if (res.role !== 'teacher' && res.role !== 'super_admin' && res.role !== 'admin') {
+      if (res.role !== 'teacher') {
         await requestServerJson("/api/auth/logout", { method: "POST" });
-        throw new Error("هذا الدخول مخصص للمعلمين فقط.");
+        throw new Error("هذه البوابة مخصصة للمعلمين فقط.");
       }
     }
 
@@ -74,7 +100,7 @@ async function performRoleLogin(prefix) {
 
     document.getElementById(`${prefix}-pass`).value = "";
     updateAdminLoginView();
-    await goPage("pg-admindash");
+    await goPage(res.role === "super_admin" ? "pg-admin-teachers" : "pg-admindash");
   } catch (error) {
     showErr(errorEl, `❌ ${mapFirebaseError(error, "بيانات الدخول غير صحيحة.")}`);
   } finally {
@@ -132,6 +158,11 @@ async function loadAdminDashboard() {
     });
     return true;
   } catch (error) {
+    if (error.redirectTo) {
+      alert(error.message || "هذه البوابة مخصصة للمعلمين فقط.");
+      await goPage(error.redirectTo);
+      return false;
+    }
     const message = mapFirebaseError(error, "تعذر تحميل لوحة التحكم.");
     if (message.includes("سجّل دخول")) { showErr(document.getElementById("al-err"), message); showPage("pg-adminlogin"); return false; }
     alert(message);
@@ -184,17 +215,14 @@ let currentEditingTeacherId = null;
 
 async function loadAdminTeachers() {
   try {
-    const session = await syncSession();
-    if (session.role !== 'super_admin') {
-      alert("هذه الصفحة متاحة للمسؤول العام فقط.");
-      goPage("pg-admindash");
-      return;
-    }
+    await ensureSuperAdminPortalAccess();
     const data = await requestServerJson("/api/admin/teachers", { method: "GET" });
     teachersState = data.teachers || [];
     renderTeacherList(teachersState);
+    return true;
   } catch (error) {
     alert(mapFirebaseError(error, "تعذر تحميل قائمة المدرسين."));
+    return false;
   }
 }
 
@@ -229,6 +257,8 @@ function renderTeacherList(teachers) {
           ${teachers.map((t) => {
             const perms = t.permissions || {};
             const permCount = Object.values(perms).filter(v => v === true).length;
+            const teacherUidArg = escapeAttribute(JSON.stringify(t.uid || ""));
+            const teacherNameArg = escapeAttribute(JSON.stringify(t.name || ""));
             return `
               <tr>
                 <td>
@@ -245,12 +275,12 @@ function renderTeacherList(teachers) {
                 </td>
                 <td>
                   <div style="display:flex; gap:8px; justify-content:center">
-                    <button class="btn btn-sm btn-outline" onclick="openEditTeacherModal('${t.uid}')">تعديل و صلاحيات</button>
-                    <button class="btn btn-sm btn-outline" style="color:var(--gm)" onclick="openResetTeacherPasswordModal('${t.uid}', '${escapeAttribute(t.name)}')">كلمة المرور</button>
-                    <button class="btn btn-sm ${t.isActive !== false ? "btn-outline" : "btn-green"}" style="${t.isActive !== false ? "color:var(--red); border-color:rgba(153,27,27,0.2)" : ""}" onclick="toggleTeacherStatus('${t.uid}', ${t.isActive !== false})">
+                    <button class="btn btn-sm btn-outline" onclick="openEditTeacherModal(${teacherUidArg})">تعديل و صلاحيات</button>
+                    <button class="btn btn-sm btn-outline" style="color:var(--gm)" onclick="openResetTeacherPasswordModal(${teacherUidArg}, ${teacherNameArg})">كلمة المرور</button>
+                    <button class="btn btn-sm ${t.isActive !== false ? "btn-outline" : "btn-green"}" style="${t.isActive !== false ? "color:var(--red); border-color:rgba(153,27,27,0.2)" : ""}" onclick="toggleTeacherStatus(${teacherUidArg}, ${t.isActive !== false})">
                       ${t.isActive !== false ? "إيقاف" : "تنشيط"}
                     </button>
-                    <button class="btn btn-sm btn-outline" style="color:var(--red); opacity:0.6" onclick="deleteTeacher('${t.uid}')">حذف</button>
+                    <button class="btn btn-sm btn-outline" style="color:var(--red); opacity:0.6" onclick="deleteTeacher(${teacherUidArg})">حذف</button>
                   </div>
                 </td>
               </tr>
@@ -402,13 +432,15 @@ async function goPage(id) {
   }
   if (ADMIN_PAGES.has(id)) {
     try {
-      if (id === "pg-admindash" || id === "pg-createexam") {
+      if (id === "pg-admin-teachers") {
+        const loaded = await loadAdminTeachers();
+        if (!loaded) return;
+      } else if (id === "pg-admindash" || id === "pg-createexam") {
         const loaded = await loadAdminDashboard();
         if (!loaded) return;
       } else if (id === "pg-teacher-students") {
-        await loadTeacherStudents();
-      } else if (id === "pg-admin-teachers") {
-        await loadAdminTeachers();
+        const loaded = await loadTeacherStudents();
+        if (!loaded) return;
       } else {
         await ensureAdminAccess();
       }
@@ -416,6 +448,11 @@ async function goPage(id) {
       if (id === "pg-banks") await loadQuestionBanksPage();
     } catch (error) {
       const message = mapFirebaseError(error, "تعذر فتح الصفحة المطلوبة.");
+      if (error.redirectTo) {
+        alert(message);
+        await goPage(error.redirectTo);
+        return;
+      }
       if (message.includes("سجّل دخول")) { showErr(document.getElementById("al-err"), message); showPage("pg-adminlogin"); return; }
       alert(message);
       return;
@@ -1094,8 +1131,15 @@ async function loadTeacherStudents() {
     teacherStudentsList = data.students || [];
     teacherStudentsFiltered = [...teacherStudentsList];
     renderTeacherStudentsList();
+    return true;
   } catch (error) {
+    if (error.redirectTo) {
+      alert(error.message || "هذه البوابة مخصصة للمعلمين فقط.");
+      await goPage(error.redirectTo);
+      return false;
+    }
     alert(mapFirebaseError(error, "تعذر تحميل قائمة الطلاب."));
+    return false;
   }
 }
 
@@ -1116,7 +1160,10 @@ function renderTeacherStudentsList(list) {
     <thead><tr>
       <th>#</th><th>الاسم</th><th>المعرف</th><th style="text-align:center">الحالة</th><th style="text-align:center">إجراءات</th>
     </tr></thead>
-    <tbody>${students.map((s, i) => `<tr>
+    <tbody>${students.map((s, i) => {
+      const studentUidArg = escapeAttribute(JSON.stringify(s.uid || ""));
+      const studentNameArg = escapeAttribute(JSON.stringify(s.name || ""));
+      return `<tr>
       <td style="color:var(--tl); font-weight:800">${i + 1}</td>
       <td><div style="font-weight:900; color:var(--gd); font-size:16px">${escapeHtml(s.name || "")}</div></td>
       <td><span style="font-family:monospace; color:var(--tm); font-size:14px">${escapeHtml(s.username || "")}</span></td>
@@ -1125,12 +1172,13 @@ function renderTeacherStudentsList(list) {
       </td>
       <td style="text-align:center">
         <div style="display:flex; gap:8px; justify-content:center">
-          <button class="btn btn-sm btn-outline" style="padding:6px 12px" onclick="openResetPasswordModal('${s.uid}', '${escapeHtml(s.name || "")}')">🔑 كلمة المرور</button>
-          <button class="btn btn-sm btn-outline" style="padding:6px 12px; color:${s.isActive !== false ? "var(--red)" : "var(--gm)"}" onclick="toggleStudentStatus('${s.uid}', ${s.isActive !== false})">${s.isActive !== false ? "⏸ إيقاف" : "▶ تفعيل"}</button>
-          <button class="btn btn-sm btn-outline" style="padding:6px 12px; color:var(--red)" onclick="deleteStudent('${s.uid}', '${escapeHtml(s.name || "")}')">🗑 حذف</button>
+          <button class="btn btn-sm btn-outline" style="padding:6px 12px" onclick="openResetPasswordModal(${studentUidArg}, ${studentNameArg})">🔑 كلمة المرور</button>
+          <button class="btn btn-sm btn-outline" style="padding:6px 12px; color:${s.isActive !== false ? "var(--red)" : "var(--gm)"}" onclick="toggleStudentStatus(${studentUidArg}, ${s.isActive !== false})">${s.isActive !== false ? "⏸ إيقاف" : "▶ تفعيل"}</button>
+          <button class="btn btn-sm btn-outline" style="padding:6px 12px; color:var(--red)" onclick="deleteStudent(${studentUidArg}, ${studentNameArg})">🗑 حذف</button>
         </div>
       </td>
-    </tr>`).join("")}</tbody>
+    </tr>`;
+    }).join("")}</tbody>
   </table></div>`;
 }
 

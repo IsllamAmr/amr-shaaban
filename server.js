@@ -431,7 +431,7 @@ function createSessionSignature(payload) {
 
 function createSignedSessionCookieValue(user) {
   const payload = Buffer.from(JSON.stringify({
-    role: user.role, // 'admin', 'teacher', or 'student'
+    role: user.role, // 'super_admin', 'teacher', or 'student'
     uid: user.username || user.uid,
     name: user.displayName || user.name,
     exp: Date.now() + SESSION_TTL_MS
@@ -464,7 +464,7 @@ function readSessionFromRequest(request) {
     const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
 
     if (
-      !['admin', 'teacher', 'student'].includes(parsed.role)
+      !['super_admin', 'teacher', 'student'].includes(parsed.role)
       || typeof parsed.uid !== 'string'
       || typeof parsed.exp !== 'number'
       || parsed.exp <= Date.now()
@@ -490,11 +490,6 @@ function requireRole(role) {
   return (request, response, next) => {
     try {
       const session = requireAuth(request);
-      // super_admin has access to everything
-      if (session.role === 'super_admin') {
-        request.session = session;
-        return next();
-      }
       if (session.role !== role) {
         throw createHttpError(403, 'غير مسموح لك بالوصول لهذا الجزء.');
       }
@@ -509,18 +504,13 @@ function requireRole(role) {
 function requireSuperAdmin(request) {
   const session = readSessionFromRequest(request);
   if (!session || session.role !== 'super_admin') {
-    throw createHttpError(403, 'هذه الصلاحية متاحة للمسؤول العام فقط.');
+    throw createHttpError(403, 'هذه البوابة مخصصة للإدارة العليا فقط');
   }
   return session;
 }
 
 function requireAdmin(request) {
-  const session = readSessionFromRequest(request);
-  // super_admin is also an admin
-  if (!session || !['super_admin', 'admin'].includes(session.role)) {
-    throw createHttpError(401, 'دخول المسؤول مطلوب.');
-  }
-  return session;
+  return requireSuperAdmin(request);
 }
 
 async function getUserPermissions(uid) {
@@ -531,13 +521,12 @@ async function getUserPermissions(uid) {
 async function requireTeacher(request, permission = null) {
   const session = readSessionFromRequest(request);
   
-  if (!session || !['super_admin', 'admin', 'teacher'].includes(session.role)) {
+  if (!session) {
     throw createHttpError(401, 'دخول المدرس مطلوب.');
   }
 
-  // Super Admin and Admin bypass permission checks
-  if (['super_admin', 'admin'].includes(session.role)) {
-    return session;
+  if (session.role !== 'teacher') {
+    throw createHttpError(403, 'هذه البوابة مخصصة للمعلمين فقط.');
   }
 
   if (permission) {
@@ -2745,8 +2734,7 @@ async function findUserByUsername(username) {
   // First check static admins (fallback)
   const staticAdmin = getAdminAccount(normalized);
   if (staticAdmin) {
-    const isSuper = process.env.SUPER_ADMIN_USERNAME && normalized === normalizeAdminUsername(process.env.SUPER_ADMIN_USERNAME);
-    return { ...staticAdmin, role: isSuper ? 'super_admin' : 'admin', uid: staticAdmin.username, isActive: true };
+    return { ...staticAdmin, role: 'super_admin', uid: staticAdmin.username, isActive: true };
   }
 
   // Then check database
@@ -2783,7 +2771,7 @@ app.get('/api/auth/session', (request, response) => {
 // Legacy backward compatibility for old admin JS
 app.get('/api/admin/session', (request, response) => {
   const session = readSessionFromRequest(request);
-  if (!session || !['admin', 'super_admin', 'teacher'].includes(session.role)) {
+  if (!session || !['super_admin', 'teacher'].includes(session.role)) {
     sendJson(response, 200, { authenticated: false });
     return;
   }
@@ -2807,6 +2795,10 @@ app.post('/api/auth/login', parseJsonBody, async (request, response, next) => {
 
     if (user.isActive === false) {
       throw createHttpError(403, 'هذا الحساب موقوف حالياً. يرجى مراجعة الإدارة.');
+    }
+
+    if (!['super_admin', 'teacher', 'student'].includes(user.role)) {
+      throw createHttpError(403, 'نوع الحساب غير مدعوم في بوابات ركائز الحالية.');
     }
 
     // Verify password
@@ -3369,7 +3361,18 @@ app.get('/api/student/dashboard', async (request, response, next) => {
     ]);
 
     const userData = userSnapshot.val() || {};
-    const history = historySnapshot.exists() ? Object.values(historySnapshot.val()).sort((a, b) => b.at - a.at) : [];
+    if (!userSnapshot.exists() || userData.role !== 'student') {
+      throw createHttpError(404, 'حساب الطالب غير موجود.');
+    }
+    if (userData.isActive === false) {
+      throw createHttpError(403, 'هذا الحساب موقوف حالياً. يرجى مراجعة الإدارة.');
+    }
+
+    const history = historySnapshot.exists()
+      ? Object.values(historySnapshot.val() || {})
+        .filter((item) => item && typeof item === 'object')
+        .sort((a, b) => Number(b.at || b.submittedAt || 0) - Number(a.at || a.submittedAt || 0))
+      : [];
 
     sendJson(response, 200, {
       profile: {

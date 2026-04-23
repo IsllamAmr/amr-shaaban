@@ -39,7 +39,9 @@ async function loadStudentDashboard() {
     if (profDateEl) profDateEl.textContent = formatDate(profile.createdAt);
 
     // Update Stats
-    const history = data.history || [];
+    const history = Array.isArray(data.history)
+      ? data.history.filter((item) => item && typeof item === "object")
+      : Object.values(data.history || {}).filter((item) => item && typeof item === "object");
     const takenEl = document.getElementById("sd-stat-taken");
     const avgEl = document.getElementById("sd-stat-avg");
     const rankEl = document.getElementById("sd-stat-rank");
@@ -66,18 +68,23 @@ async function loadStudentDashboard() {
             <p>ليس لديك أي اختبارات سابقة حتى الآن.</p>
           </div>`;
       } else {
-        container.innerHTML = history.map(item => `
+        container.innerHTML = history.map(item => {
+          const pct = Number(item.pct || 0);
+          const score = Number(item.score || 0);
+          const total = Number(item.total || 0);
+          return `
           <div class="card" style="margin-bottom:16px; padding:20px; display:flex; justify-content:space-between; align-items:center">
             <div>
               <div style="font-weight:900; font-size:18px; color:var(--gd); margin-bottom:4px">${escapeHtml(item.examTitle || "")}</div>
               <div style="font-size:13px; color:var(--tm)">كود: <span style="font-family:monospace">${escapeHtml(item.examCode || "")}</span> • ${formatDate(item.at)}</div>
             </div>
             <div style="text-align:left">
-              <div style="font-size:24px; font-weight:900; color:${getScoreColor(item.pct)}">${item.score}/${item.total}</div>
-              <div style="font-size:12px; opacity:0.7; font-weight:800">${item.pct}%</div>
+              <div style="font-size:24px; font-weight:900; color:${getScoreColor(pct)}">${score}/${total}</div>
+              <div style="font-size:12px; opacity:0.7; font-weight:800">${pct}%</div>
             </div>
           </div>
-        `).join("");
+        `;
+        }).join("");
       }
     }
 
@@ -162,10 +169,15 @@ async function studentMockLogin() {
 
   setButtonLoading(loginButton, true, "جارٍ التحقق...");
   try {
-    await requestServerJson("/api/auth/login", {
+    const res = await requestServerJson("/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ username, password })
     });
+
+    if (res.role !== "student") {
+      await requestServerJson("/api/auth/logout", { method: "POST" });
+      throw new Error("هذه البوابة مخصصة للطلاب فقط.");
+    }
     
     // Sync shared session state
     await syncSession();
@@ -660,7 +672,7 @@ async function goHome() {
   hideErr("h-err"); hideErr("rl-err");
 
   // If student session is still active, go back to student dashboard
-  if (isAuthenticated && currentRole === 'student' && currentStudent) {
+  if (isUserAuthenticated && currentRole === 'student' && currentStudent) {
     try {
       await loadStudentDashboard();
       return;
