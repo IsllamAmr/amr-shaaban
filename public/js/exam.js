@@ -6,6 +6,7 @@
 // ============ Student Entry ============
 
 function renderStudentEntryStepper() {
+  // Safely handle optional stepper element
   document.querySelectorAll("#h-stepper .student-step-indicator").forEach((indicator) => {
     const step = Number(indicator.dataset.step || 0);
     indicator.classList.toggle("is-active", step === studentEntryStep);
@@ -22,51 +23,62 @@ function togglePasswordVisibility(id) {
 async function loadStudentDashboard() {
   try {
     const data = await requestServerJson("/api/student/dashboard", { method: "GET" });
-    currentStudent = data.profile?.name || currentUser?.name || currentStudent || "";
-    currentStudentGroup = data.profile?.group || currentStudentGroup || "";
+    // Guard against missing profile fields
+    const profile = data.profile || {};
+    currentStudent = profile.name || currentUser?.name || currentStudent || "";
+    currentStudentGroup = profile.group || currentStudentGroup || "";
 
     // Update Profile UI
-    document.getElementById("sd-header-name").textContent = data.profile.name;
-    document.getElementById("sd-prof-name").textContent = data.profile.name;
-    document.getElementById("sd-prof-user").textContent = data.profile.username;
-    document.getElementById("sd-prof-date").textContent = formatDate(data.profile.createdAt);
+    const headerNameEl = document.getElementById("sd-header-name");
+    const profNameEl = document.getElementById("sd-prof-name");
+    const profUserEl = document.getElementById("sd-prof-user");
+    const profDateEl = document.getElementById("sd-prof-date");
+    if (headerNameEl) headerNameEl.textContent = profile.name || "";
+    if (profNameEl) profNameEl.textContent = profile.name || "";
+    if (profUserEl) profUserEl.textContent = profile.username || "";
+    if (profDateEl) profDateEl.textContent = formatDate(profile.createdAt);
 
     // Update Stats
     const history = data.history || [];
-    document.getElementById("sd-stat-taken").textContent = history.length;
+    const takenEl = document.getElementById("sd-stat-taken");
+    const avgEl = document.getElementById("sd-stat-avg");
+    const rankEl = document.getElementById("sd-stat-rank");
+    if (takenEl) takenEl.textContent = history.length;
 
     const avgPct = history.length 
       ? Math.round(history.reduce((sum, item) => sum + (item.pct || 0), 0) / history.length) 
       : 0;
-    document.getElementById("sd-stat-avg").textContent = `${avgPct}%`;
+    if (avgEl) avgEl.textContent = `${avgPct}%`;
 
-    let level = "مبتدئ";
-    if (avgPct >= 90) level = "عبقري 💎";
-    else if (avgPct >= 75) level = "متميز 🌟";
-    else if (avgPct >= 50) level = "مجتهد ✅";
-    document.getElementById("sd-stat-rank").textContent = level;
+    let level = "\u0645\u0628\u062a\u062f\u0626"; // مبتدئ
+    if (avgPct >= 90) level = "\u0639\u0628\u0642\u0631\u064a \uD83D\uDC8E"; // عبقري
+    else if (avgPct >= 75) level = "\u0645\u062a\u0645\u064a\u0632 \uD83C\uDF1F"; // متميز
+    else if (avgPct >= 50) level = "\u0645\u062c\u062a\u0647\u062f \u2705"; // مجتهد
+    if (rankEl) rankEl.textContent = level;
 
     // Render History
     const container = document.getElementById("sd-history-container");
-    if (!history.length) {
-      container.innerHTML = `
-        <div class="empty-state card" style="text-align:center; padding:60px 20px; color:var(--tm)">
-          <div style="font-size:48px; margin-bottom:16px">📝</div>
-          <p>ليس لديك أي اختبارات سابقة حتى الآن.</p>
-        </div>`;
-    } else {
-      container.innerHTML = history.map(item => `
-        <div class="card" style="margin-bottom:16px; padding:20px; display:flex; justify-content:space-between; align-items:center">
-          <div>
-            <div style="font-weight:900; font-size:18px; color:var(--gd); margin-bottom:4px">${escapeHtml(item.examTitle)}</div>
-            <div style="font-size:13px; color:var(--tm)">كود: <span style="font-family:monospace">${escapeHtml(item.examCode)}</span> • ${formatDate(item.at)}</div>
+    if (container) {
+      if (!history.length) {
+        container.innerHTML = `
+          <div class="empty-state card" style="text-align:center; padding:60px 20px; color:var(--tm)">
+            <div style="font-size:48px; margin-bottom:16px">📝</div>
+            <p>ليس لديك أي اختبارات سابقة حتى الآن.</p>
+          </div>`;
+      } else {
+        container.innerHTML = history.map(item => `
+          <div class="card" style="margin-bottom:16px; padding:20px; display:flex; justify-content:space-between; align-items:center">
+            <div>
+              <div style="font-weight:900; font-size:18px; color:var(--gd); margin-bottom:4px">${escapeHtml(item.examTitle || "")}</div>
+              <div style="font-size:13px; color:var(--tm)">كود: <span style="font-family:monospace">${escapeHtml(item.examCode || "")}</span> • ${formatDate(item.at)}</div>
+            </div>
+            <div style="text-align:left">
+              <div style="font-size:24px; font-weight:900; color:${getScoreColor(item.pct)}">${item.score}/${item.total}</div>
+              <div style="font-size:12px; opacity:0.7; font-weight:800">${item.pct}%</div>
+            </div>
           </div>
-          <div style="text-align:left">
-            <div style="font-size:24px; font-weight:900; color:${getScoreColor(item.pct)}">${item.score}/${item.total}</div>
-            <div style="font-size:12px; opacity:0.7; font-weight:800">${item.pct}%</div>
-          </div>
-        </div>
-      `).join("");
+        `).join("");
+      }
     }
 
     showPage("pg-student-dash");
@@ -627,12 +639,12 @@ function printPublishedResult() {
 
 // ============ Navigation ============
 
-function goHome() {
+async function goHome() {
   clearInterval(examTimerInterval);
   teardownAntiCheat();
   closeWarnModal();
-  closeAdminReview();
-  currentExam = null; currentAttemptToken = ""; currentStudent = ""; currentStudentGroup = "";
+  if (typeof closeAdminReview === "function") closeAdminReview();
+  currentExam = null; currentAttemptToken = ""; 
   currentSubmissionReceipt = null; currentPublishedResult = null;
   studentAnswers = []; examTimeLeft = 0; examTotalTime = 0;
   cheatWarnings = 0; studentEntryStep = 1;
@@ -642,9 +654,19 @@ function goHome() {
   const passInput = document.getElementById("h-student-pass");
   if (idInput) idInput.value = "";
   if (passInput) passInput.value = "";
-  document.getElementById("h-code").value = "";
+  const codeInput = document.getElementById("h-code");
+  if (codeInput) codeInput.value = "";
   
   hideErr("h-err"); hideErr("rl-err");
+
+  // If student session is still active, go back to student dashboard
+  if (isAuthenticated && currentRole === 'student' && currentStudent) {
+    try {
+      await loadStudentDashboard();
+      return;
+    } catch (_) { /* fall through to home page */ }
+  }
+
   updateHomeEntryMode(); goStudentEntryStep(1);
   showPage("pg-home");
 }

@@ -697,13 +697,22 @@ async function deleteExam(id) {
 
 function resetBankEditor(createStarterQuestion = true) {
   activeBankId = null; activeBankUpdatedAt = 0; bankQuestions = []; bankQuestionCounter = 0;
-  document.getElementById("qb-name").value = "";
-  document.getElementById("qb-description").value = "";
-  document.getElementById("qb-editor-title").textContent = "بنك جديد";
-  document.getElementById("qb-editor-subtitle").textContent = "اكتب اسم البنك ثم أضف إليه الأسئلة التي تريد الرجوع إليها لاحقًا.";
-  document.getElementById("qb-delete-btn").style.display = "none";
+  const nameEl = document.getElementById("qb-name");
+  const descEl = document.getElementById("qb-description");
+  const titleEl = document.getElementById("qb-editor-title");
+  const subEl = document.getElementById("qb-editor-subtitle");
+  const delBtn = document.getElementById("qb-delete-btn");
+  if (nameEl) nameEl.value = "";
+  if (descEl) descEl.value = "";
+  if (titleEl) titleEl.textContent = "\u0628\u0646\u0643 \u062c\u062f\u064a\u062f";
+  if (subEl) subEl.textContent = "\u0627\u0643\u062a\u0628 \u0627\u0633\u0645 \u0627\u0644\u0628\u0646\u0643 \u062b\u0645 \u0623\u0636\u0641 \u0625\u0644\u064a\u0647 \u0627\u0644\u0623\u0633\u0626\u0644\u0629 \u0627\u0644\u062a\u064a \u062a\u0631\u064a\u062f \u0627\u0644\u0631\u062c\u0648\u0639 \u0625\u0644\u064a\u0647\u0627 \u0644\u0627\u062d\u0642\u064b\u0627.";
+  if (delBtn) delBtn.style.display = "none";
   hideErr("qb-err"); hideBankNote();
-  if (createStarterQuestion) bankQuestions.push(createEmptyQuestion("mcq", createBankQuestionId));
+  if (createStarterQuestion) {
+    const sq = createEmptyQuestion();
+    sq.id = 'bq' + (++bankQuestionCounter);
+    bankQuestions.push(sq);
+  }
   renderBankList(); renderBankQuestions();
 }
 
@@ -711,12 +720,28 @@ function openBankEditor(bankId) {
   const bank = getBankById(bankId);
   if (!bank) return;
   activeBankId = bank.id; activeBankUpdatedAt = Number(bank.updatedAt || bank.createdAt || 0); bankQuestionCounter = 0;
-  bankQuestions = bank.questions.map((q) => ({ ...createEmptyQuestion(q.type, createBankQuestionId), text: q.text, options: [...q.options], correct: q.correct, attachment: normalizeAttachment(q.attachment), difficulty: normalizeDifficulty(q.difficulty) }));
-  document.getElementById("qb-name").value = bank.title;
-  document.getElementById("qb-description").value = bank.description || "";
-  document.getElementById("qb-editor-title").textContent = bank.title;
-  document.getElementById("qb-editor-subtitle").textContent = `${bank.questionCount} سؤال • ${buildDifficultySummary(bank.questions)}`;
-  document.getElementById("qb-delete-btn").style.display = "inline-flex";
+  bankQuestions = bank.questions.map((q) => {
+    const eq = createEmptyQuestion();
+    eq.id = 'bq' + (++bankQuestionCounter);
+    eq.type = q.type || 'mcq';
+    eq.text = q.text;
+    eq.options = Array.isArray(q.options) ? [...q.options] : ['', '', '', ''];
+    if (eq.type === 'tf') eq.options = ['\u0635\u062d', '\u062e\u0637\u0623'];
+    eq.correct = q.correct >= 0 ? q.correct : -1;
+    eq.attachment = normalizeAttachment(q.attachment);
+    eq.difficulty = normalizeDifficulty(q.difficulty);
+    return eq;
+  });
+  const nameEl = document.getElementById("qb-name");
+  const descEl = document.getElementById("qb-description");
+  const titleEl = document.getElementById("qb-editor-title");
+  const subEl = document.getElementById("qb-editor-subtitle");
+  const delBtn = document.getElementById("qb-delete-btn");
+  if (nameEl) nameEl.value = bank.title;
+  if (descEl) descEl.value = bank.description || "";
+  if (titleEl) titleEl.textContent = bank.title;
+  if (subEl) subEl.textContent = `${bank.questionCount} \u0633\u0624\u0627\u0644 \u2022 ${buildDifficultySummary(bank.questions)}`;
+  if (delBtn) delBtn.style.display = "inline-flex";
   hideErr("qb-err"); hideBankNote();
   renderBankList(); renderBankQuestions();
 }
@@ -1052,4 +1077,199 @@ function printExcellenceCertificate(resultId = currentAdminReviewId) {
       <div class="print-grid" style="margin-bottom:22px"><div class="print-stat"><strong>${result.pct}%</strong><span>نسبة الإنجاز</span></div><div class="print-stat"><strong>${escapeHtml(result.studentGroup)}</strong><span>الفصل / المجموعة</span></div><div class="print-stat"><strong>${formatDate(result.at)}</strong><span>تاريخ التسليم</span></div></div>
     </div>
   `);
+}
+
+// ============ Student Management (Teacher) ============
+
+let teacherStudentsList = [];
+let teacherStudentsFiltered = [];
+let currentResetStudentId = null;
+let currentResetTeacherId = null;
+let isAddStudentModalOpen = false;
+
+async function loadTeacherStudents() {
+  try {
+    await ensureAdminAccess();
+    const data = await requestServerJson("/api/teacher/students", { method: "GET" });
+    teacherStudentsList = data.students || [];
+    teacherStudentsFiltered = [...teacherStudentsList];
+    renderTeacherStudentsList();
+  } catch (error) {
+    alert(mapFirebaseError(error, "تعذر تحميل قائمة الطلاب."));
+  }
+}
+
+function renderTeacherStudentsList(list) {
+  const students = list || teacherStudentsFiltered || teacherStudentsList;
+  const container = document.getElementById("ts-list");
+  const countEl = document.getElementById("ts-count");
+  if (!container) return;
+  if (countEl) countEl.textContent = `${students.length} طالب`;
+  if (!students.length) {
+    container.innerHTML = `<div class="empty-state card" style="text-align:center; padding:60px 20px; color:var(--tm)">
+      <div style="font-size:48px; margin-bottom:16px">👥</div>
+      <p>لم تضف أي طلاب بعد. اضغط على "إضافة طالب" للبدء.</p>
+    </div>`;
+    return;
+  }
+  container.innerHTML = `<div class="saas-table-container"><table class="saas-table">
+    <thead><tr>
+      <th>#</th><th>الاسم</th><th>المعرف</th><th style="text-align:center">الحالة</th><th style="text-align:center">إجراءات</th>
+    </tr></thead>
+    <tbody>${students.map((s, i) => `<tr>
+      <td style="color:var(--tl); font-weight:800">${i + 1}</td>
+      <td><div style="font-weight:900; color:var(--gd); font-size:16px">${escapeHtml(s.name || "")}</div></td>
+      <td><span style="font-family:monospace; color:var(--tm); font-size:14px">${escapeHtml(s.username || "")}</span></td>
+      <td style="text-align:center">
+        <span class="badge ${s.isActive !== false ? "badge-green" : "badge-red"}">${s.isActive !== false ? "نشط" : "موقوف"}</span>
+      </td>
+      <td style="text-align:center">
+        <div style="display:flex; gap:8px; justify-content:center">
+          <button class="btn btn-sm btn-outline" style="padding:6px 12px" onclick="openResetPasswordModal('${s.uid}', '${escapeHtml(s.name || "")}')">🔑 كلمة المرور</button>
+          <button class="btn btn-sm btn-outline" style="padding:6px 12px; color:${s.isActive !== false ? "var(--red)" : "var(--gm)"}" onclick="toggleStudentStatus('${s.uid}', ${s.isActive !== false})">${s.isActive !== false ? "⏸ إيقاف" : "▶ تفعيل"}</button>
+          <button class="btn btn-sm btn-outline" style="padding:6px 12px; color:var(--red)" onclick="deleteStudent('${s.uid}', '${escapeHtml(s.name || "")}')">🗑 حذف</button>
+        </div>
+      </td>
+    </tr>`).join("")}</tbody>
+  </table></div>`;
+}
+
+function filterStudentList() {
+  const query = (document.getElementById("ts-search")?.value || "").trim().toLowerCase();
+  if (!query) {
+    teacherStudentsFiltered = [...teacherStudentsList];
+  } else {
+    teacherStudentsFiltered = teacherStudentsList.filter((s) =>
+      (s.name || "").toLowerCase().includes(query) ||
+      (s.username || "").toLowerCase().includes(query)
+    );
+  }
+  renderTeacherStudentsList(teacherStudentsFiltered);
+}
+
+function openAddStudentModal() {
+  const modal = document.getElementById("add-student-modal");
+  if (!modal) { alert("نموذج إضافة الطالب غير موجود في الصفحة."); return; }
+  document.getElementById("ns-name").value = "";
+  document.getElementById("ns-username").value = "";
+  document.getElementById("ns-pass").value = "";
+  hideErr("ns-err");
+  modal.style.display = "flex";
+}
+
+function closeStudentModal() {
+  const modal = document.getElementById("add-student-modal");
+  if (modal) modal.style.display = "none";
+}
+
+async function saveStudent() {
+  const name = document.getElementById("ns-name")?.value?.trim();
+  const username = document.getElementById("ns-username")?.value?.trim();
+  const password = document.getElementById("ns-pass")?.value?.trim();
+  const err = document.getElementById("ns-err");
+  const btn = document.getElementById("ns-save-btn");
+  hideErr("ns-err");
+  if (!name) { showErr(err, "أدخل اسم الطالب."); return; }
+  if (!username) { showErr(err, "أدخل المعرف / البريد."); return; }
+  if (!password || password.length < 6) { showErr(err, "كلمة المرور يجب أن تكون 6 أحرف على الأقل."); return; }
+  setButtonLoading(btn, true, "جارٍ الحفظ...");
+  try {
+    await requestServerJson("/api/teacher/students", {
+      method: "POST",
+      body: JSON.stringify({ name, username, password })
+    });
+    closeStudentModal();
+    await loadTeacherStudents();
+  } catch (error) {
+    showErr(err, mapFirebaseError(error, "تعذر إضافة الطالب."));
+  } finally {
+    setButtonLoading(btn, false);
+  }
+}
+
+function openResetPasswordModal(studentId, studentName) {
+  currentResetStudentId = studentId;
+  const modal = document.getElementById("reset-pass-modal");
+  const nameEl = document.getElementById("rp-student-name");
+  const passEl = document.getElementById("rp-new-pass");
+  if (!modal) { alert("نموذج إعادة تعيين كلمة المرور غير موجود."); return; }
+  if (nameEl) nameEl.textContent = studentName;
+  if (passEl) passEl.value = "";
+  hideErr("rp-err");
+  modal.style.display = "flex";
+}
+
+async function confirmResetPassword() {
+  const newPassword = document.getElementById("rp-new-pass")?.value?.trim();
+  const err = document.getElementById("rp-err");
+  hideErr("rp-err");
+  if (!newPassword || newPassword.length < 6) { showErr(err, "كلمة المرور يجب أن تكون 6 أحرف على الأقل."); return; }
+  if (!currentResetStudentId) { showErr(err, "لا يوجد طالب محدد."); return; }
+  try {
+    await requestServerJson(`/api/teacher/students/${encodeURIComponent(currentResetStudentId)}/reset-password`, {
+      method: "PATCH",
+      body: JSON.stringify({ password: newPassword })
+    });
+    document.getElementById("reset-pass-modal").style.display = "none";
+    currentResetStudentId = null;
+    alert("تم تغيير كلمة المرور بنجاح.");
+  } catch (error) {
+    showErr(err, mapFirebaseError(error, "تعذر تغيير كلمة المرور."));
+  }
+}
+
+async function toggleStudentStatus(studentId, currentActiveState) {
+  if (!confirm(`هل تريد ${currentActiveState ? "إيقاف" : "تفعيل"} هذا الطالب؟`)) return;
+  try {
+    await requestServerJson(`/api/teacher/students/${encodeURIComponent(studentId)}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ isActive: !currentActiveState })
+    });
+    await loadTeacherStudents();
+  } catch (error) {
+    alert(mapFirebaseError(error, "تعذر تغيير حالة الطالب."));
+  }
+}
+
+async function deleteStudent(studentId, studentName) {
+  if (!confirm(`هل أنت متأكد من حذف الطالب "${studentName}"؟ لا يمكن التراجع عن هذه الخطوة.`)) return;
+  try {
+    await requestServerJson(`/api/teacher/students/${encodeURIComponent(studentId)}`, { method: "DELETE" });
+    await loadTeacherStudents();
+  } catch (error) {
+    alert(mapFirebaseError(error, "تعذر حذف الطالب."));
+  }
+}
+
+// ============ Teacher Management (Super Admin) ============
+
+function openResetTeacherPasswordModal(teacherId, teacherName) {
+  currentResetTeacherId = teacherId;
+  const modal = document.getElementById("reset-teacher-pass-modal");
+  const nameEl = document.getElementById("rtp-teacher-name");
+  const passEl = document.getElementById("rtp-new-pass");
+  if (!modal) { alert("نموذج إعادة تعيين كلمة المرور غير موجود."); return; }
+  if (nameEl) nameEl.textContent = teacherName;
+  if (passEl) passEl.value = "";
+  hideErr("rtp-err");
+  modal.style.display = "flex";
+}
+
+async function confirmResetTeacherPassword() {
+  const newPassword = document.getElementById("rtp-new-pass")?.value?.trim();
+  const err = document.getElementById("rtp-err");
+  hideErr("rtp-err");
+  if (!newPassword || newPassword.length < 8) { showErr(err, "كلمة المرور يجب أن تكون 8 أحرف على الأقل."); return; }
+  if (!currentResetTeacherId) { showErr(err, "لا يوجد مدرس محدد."); return; }
+  try {
+    await requestServerJson(`/api/admin/teachers/${encodeURIComponent(currentResetTeacherId)}/reset-password`, {
+      method: "PATCH",
+      body: JSON.stringify({ password: newPassword })
+    });
+    document.getElementById("reset-teacher-pass-modal").style.display = "none";
+    currentResetTeacherId = null;
+    alert("تم تغيير كلمة مرور المدرس بنجاح.");
+  } catch (error) {
+    showErr(err, mapFirebaseError(error, "تعذر تغيير كلمة مرور المدرس."));
+  }
 }

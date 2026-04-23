@@ -112,6 +112,51 @@
       
 
       
+      <!-- pg-teacher-students -->
+      <div class="page" id="pg-teacher-students">
+        <header class="saas-header">
+          <div class="saas-title-group">
+            <h1>👥 إدارة الطلاب</h1>
+            <p>إضافة وإدارة حسابات الطلاب المرتبطين بحسابك — <span id="ts-count">0 طالب</span></p>
+          </div>
+          <button class="btn btn-green" onclick="openAddStudentModal()">+ إضافة طالب</button>
+        </header>
+        <main class="saas-container">
+          <div class="card" style="padding:24px; margin-bottom:32px">
+            <div style="position:relative">
+              <input class="inp" id="ts-search" placeholder="ابحث عن طالب بالاسم أو المعرف..." oninput="filterStudentList()" style="padding-right:48px">
+              <span style="position:absolute; right:16px; top:50%; transform:translateY(-50%); font-size:18px; opacity:0.5">🔍</span>
+            </div>
+          </div>
+          <div id="ts-list"></div>
+        </main>
+      </div>
+
+      <!-- Add Student Modal -->
+      <div class="modal-overlay" id="add-student-modal" style="display:none">
+        <div class="modal" style="max-width:520px">
+          <h2 style="margin-bottom:8px">إضافة طالب جديد</h2>
+          <p style="color:var(--tm); font-size:14px; margin-bottom:32px">أنشئ حساباً للطالب ليتمكن من الدخول والتسليم</p>
+          <div class="inp-wrap">
+            <label class="label">اسم الطالب بالكامل</label>
+            <input class="inp" id="ns-name" placeholder="مثال: محمد أحمد">
+          </div>
+          <div class="inp-wrap">
+            <label class="label">المعرف (اسم المستخدم)</label>
+            <input class="inp" id="ns-username" placeholder="مثال: student123" style="direction:ltr; text-align:left">
+          </div>
+          <div class="inp-wrap">
+            <label class="label">كلمة المرور (6 أحرف على الأقل)</label>
+            <input class="inp" type="password" id="ns-pass" placeholder="••••••••">
+          </div>
+          <div id="ns-err" class="err" style="display:none; margin-bottom:24px"></div>
+          <div class="grid2">
+            <button class="btn btn-outline" onclick="closeStudentModal()">إلغاء</button>
+            <button class="btn btn-green" id="ns-save-btn" onclick="saveStudent()">حفظ الطالب</button>
+          </div>
+        </div>
+      </div>
+
       <!-- pg-student-dash -->
       <div class="page" id="pg-student-dash">
         <nav class="saas-top-nav">
